@@ -1,36 +1,77 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Tokens to Image
 
-## Getting Started
+Resolve ambiguous text-to-image tokens with interactive visual widgets backed by real generation pipelines (ControlNet, IP-Adapter, inpainting).
 
-First, run the development server:
+**CMPT 863** — Simon Fraser University
+
+## Problem
+
+Users struggle to communicate visual intent through text alone. Our user studies (n=12) showed:
+
+- 5-8 iterations average before giving up
+- Spatial positioning, camera angle, and pose were "nearly impossible" to describe
+- Selective edits caused the "Rubik's Cube" problem: fixing one thing ruins others
+
+## Solution
+
+The system detects ambiguous tokens in real-time and surfaces context-aware visual widgets. Each widget produces a **real conditioning signal** — not just prompt text.
+
+| Widget          | Signal                                                      | Pipeline            |
+| --------------- | ----------------------------------------------------------- | ------------------- |
+| Spatial Canvas  | Depth map (grayscale, soft ellipses)                        | ControlNet Depth    |
+| Pose Editor     | OpenPose skeleton (Gemini-generated, 4 variations)          | ControlNet Pose     |
+| Camera Controls | Perspective depth map (bird's eye / eye level / worm's eye) | ControlNet Depth    |
+| Lighting Gizmo  | Light position map (radial gradients)                       | ControlNet Depth    |
+| Color Picker    | Context-aware palettes ("red" → crimson/scarlet/burgundy)   | Prompt enrichment   |
+| Style Gallery   | Style name + IP-Adapter reference                           | Prompt + IP-Adapter |
+| Mask Painter    | Binary mask overlay                                         | Flux Inpainting     |
+
+All conditioning images are rendered client-side, uploaded to fal.ai storage, and passed as ControlNet Union Pro controls.
+
+## Setup
+
+```bash
+npm install
+```
+
+Create `.env.local`:
+
+```
+GEMINI_API_KEY=your_key
+FAL_KEY=your_key
+```
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Tech Stack
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- Next.js 16 · React 19 · TypeScript
+- Shadcn/ui · Tailwind CSS v4
+- Gemini 2.5 Flash (token detection, pose generation)
+- fal.ai Flux General + ControlNet Union Pro (image generation)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Research Foundation
 
-## Learn More
+| Widget         | Literature                                              |
+| -------------- | ------------------------------------------------------- |
+| Spatial canvas | WorldSmith (UIST 2023), LayoutDiffusion (2023)          |
+| Pose editor    | Block and Detail (UIST 2024), DWPose + ControlNet       |
+| Color picker   | Color Portraits (CHI 2015)                              |
+| Style gallery  | PromptMagician (TVCG 2024), IP-Adapter                  |
+| Lighting       | DiLightNet (SIGGRAPH 2024)                              |
+| Camera         | Canvas3D (2025), Liu & Chilton (CHI 2022)               |
+| Depth layers   | ControlNet (Zhang & Agrawala 2023), LayeringDiff (2025) |
+| Inpainting     | Flux Fill                                               |
 
-To learn more about Next.js, take a look at the following resources:
+Full taxonomy: `docs/taxonomy.csv` · User studies: `docs/briefing.pdf`
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Documentation
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `CLAUDE.md` — Development guide, schemas, gotchas
+- `docs/PIPELINE.md` — Technical pipeline flowchart with bifurcations
 
-## Deploy on Vercel
+## Contributors
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Vitor Hugo · Alex · Hasti
