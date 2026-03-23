@@ -8,7 +8,6 @@ import { DetectedToken, TokenCategory, WidgetState } from "@/types/tokens";
 import { ColorPicker } from "@/components/widgets/color-picker";
 import { StyleGallery } from "@/components/widgets/style-gallery";
 import { CameraControls } from "@/components/widgets/camera-controls";
-import { LightingGizmo } from "@/components/widgets/lighting-gizmo";
 import { MaskPainter } from "@/components/widgets/mask-painter";
 import { SpatialCanvas } from "@/components/widgets/spatial-canvas";
 import { PoseEditor } from "@/components/widgets/pose-editor";
@@ -46,7 +45,6 @@ const CATEGORY_COLORS: Record<TokenCategory, { bg: string; border: string; text:
   camera_angle: { bg: "bg-purple-50", border: "border-purple-300", text: "text-purple-700" },
   style: { bg: "bg-amber-50", border: "border-amber-300", text: "text-amber-700" },
   pose: { bg: "bg-green-50", border: "border-green-300", text: "text-green-700" },
-  lighting: { bg: "bg-yellow-50", border: "border-yellow-300", text: "text-yellow-700" },
   masking: { bg: "bg-red-50", border: "border-red-300", text: "text-red-700" },
 };
 
@@ -58,7 +56,6 @@ const CATEGORY_LABELS: Record<TokenCategory, string> = {
   camera_angle: "Camera Angle",
   style: "Art Style",
   pose: "Pose & Gesture",
-  lighting: "Lighting",
   masking: "Selective Edit",
 };
 
@@ -137,13 +134,6 @@ function TokenWidget({
           <CameraControls
             value={widgetState.cameraSettings ?? { elevation: 0, azimuth: 0, focalLength: 50, distance: 1 }}
             onChange={(settings) => onWidgetStateChange({ cameraSettings: settings })}
-            tokenText={token.text}
-          />
-        )}
-        {token.category === "lighting" && (
-          <LightingGizmo
-            value={widgetState.lightingSettings ?? { lights: [], description: "" }}
-            onChange={(settings) => onWidgetStateChange({ lightingSettings: settings })}
             tokenText={token.text}
           />
         )}

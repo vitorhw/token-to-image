@@ -6,7 +6,6 @@ export type TokenCategory =
   | "camera_angle"
   | "style"
   | "pose"
-  | "lighting"
   | "masking";
 
 export interface DetectedToken {
@@ -60,20 +59,6 @@ export interface StyleSelection {
   strength: number;
 }
 
-export interface LightSource {
-  id: string;
-  x: number;
-  y: number;
-  intensity: number;
-  colorTemp: number;
-  type: "key" | "fill" | "rim" | "ambient";
-}
-
-export interface LightingSettings {
-  lights: LightSource[];
-  description: string;
-}
-
 export interface MaskRegion {
   dataUrl: string;
   editPrompt: string;
@@ -85,11 +70,9 @@ export interface WidgetState {
   cameraSettings?: CameraSettings;
   poseSelection?: PoseSelection;
   styleSelection?: StyleSelection;
-  lightingSettings?: LightingSettings;
   maskRegion?: MaskRegion;
   depthMapDataUrl?: string;
   poseImageDataUrl?: string;
-  lightingMapDataUrl?: string;
 }
 
 export interface ConditioningImage {

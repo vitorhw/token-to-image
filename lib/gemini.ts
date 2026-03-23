@@ -5,7 +5,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
 const TOKEN_CATEGORIES: TokenCategory[] = [
   "spatial_position", "spatial_size", "spatial_depth", "color",
-  "camera_angle", "style", "pose", "lighting",
+  "camera_angle", "style", "pose",
 ];
 
 export async function detectTokens(prompt: string): Promise<DetectedToken[]> {

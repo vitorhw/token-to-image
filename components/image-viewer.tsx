@@ -15,11 +15,17 @@ interface ImageViewerProps {
   isGenerating: boolean;
   generationStatus?: string;
   enrichedPrompt?: string;
+  debugConditioningImages?: { type: string; dataUrl: string; scale: number }[];
+  useTestDepthMap?: boolean;
+  onToggleTestDepthMap?: (v: boolean) => void;
 }
 
 export function ImageViewer({
   currentImage, history, onSelectHistoryItem,
   isGenerating, generationStatus, enrichedPrompt,
+  debugConditioningImages,
+  useTestDepthMap,
+  onToggleTestDepthMap,
 }: ImageViewerProps) {
   const condImages = currentImage?.conditioningImages ?? [];
 
@@ -89,6 +95,45 @@ export function ImageViewer({
           </div>
         ) : null}
       </div>
+
+      {/* Debug: Raw conditioning images */}
+      {!isGenerating && currentImage && (debugConditioningImages?.length || onToggleTestDepthMap) && (
+        <div className="mx-auto max-w-2xl">
+          <details className="rounded-lg border bg-muted/10 p-3">
+            <summary className="text-xs font-medium cursor-pointer flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
+              <span className="text-[10px]">&#9660;</span>
+              Debug: Conditioning ({debugConditioningImages?.length ?? 0} images)
+            </summary>
+            {onToggleTestDepthMap && (
+              <label className="mt-3 flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useTestDepthMap ?? false}
+                  onChange={(e) => onToggleTestDepthMap(e.target.checked)}
+                  className="rounded"
+                />
+                Use test depth map (high-contrast left-side rectangle)
+              </label>
+            )}
+            {debugConditioningImages && debugConditioningImages.length > 0 && (
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              {debugConditioningImages.map((img, i) => (
+                <div key={i} className="rounded-lg border overflow-hidden bg-black">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={img.dataUrl} alt={`${img.type} conditioning`} className="w-full aspect-square object-contain" />
+                  <div className="bg-muted/80 px-2 py-1.5 space-y-0.5">
+                    <p className="text-[10px] font-medium">{img.type.toUpperCase()} conditioning</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Scale: {img.scale} &middot; Size: {Math.round(img.dataUrl.length / 1024)}KB data URL
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            )}
+          </details>
+        </div>
+      )}
 
       {/* History */}
       {history.length > 1 && (

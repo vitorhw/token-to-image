@@ -29,7 +29,6 @@ Technical specification of the generation pipeline from prompt input to final im
 │       ├── Pose Editor ──► PoseSelection (keypoints[])                │
 │       │     └── POST /api/generate-pose ──► Gemini ──► 4 variations  │
 │       ├── Style Gallery ──► StyleSelection (name, strength)          │
-│       ├── Lighting Gizmo ──► LightingSettings (lights[])             │
 │       └── Mask Painter ──► MaskRegion (dataUrl, editPrompt)          │
 │                                                                      │
 │  5. User clicks "Generate Image"                                     │
@@ -38,23 +37,14 @@ Technical specification of the generation pipeline from prompt input to final im
 │  ┌─────────────────────────────────────────────────────────┐         │
 │  │        CLIENT-SIDE CONDITIONING RENDERING               │         │
 │  │                                                         │         │
-│  │  CameraSettings? ──► renderCameraDepthMap()             │         │
-│  │    ├── elevation > 70° ──► bird's eye geometry           │         │
-│  │    ├── elevation < -50° ──► worm's eye geometry          │         │
-│  │    └── else ──► horizon gradient                        │         │
-│  │    Result: depthMapDataUrl (base64 PNG)                 │         │
-│  │                                                         │         │
 │  │  SpatialRegion[]? ──► renderDepthMap()                  │         │
-│  │    Soft ellipses, brighter = nearer, blurred            │         │
-│  │    Result: depthMapDataUrl (overrides camera)           │         │
+│  │    Sharp rectangles, black bg, full 0-255 range         │         │
+│  │    Result: depthMapDataUrl (base64 PNG)                 │         │
 │  │                                                         │         │
 │  │  PoseSelection? ──► renderPoseSkeleton()                │         │
 │  │    OpenPose format: colored limbs, white joints         │         │
 │  │    Result: poseImageDataUrl (base64 PNG)                │         │
 │  │                                                         │         │
-│  │  LightingSettings? ──► renderLightingMap()              │         │
-│  │    Radial gradients per light source                    │         │
-│  │    Result: lightingMapDataUrl (base64 PNG)              │         │
 │  └─────────────────────────────────────────────────────────┘         │
 │       │                                                              │
 │       ▼                                                              │
@@ -80,8 +70,8 @@ Technical specification of the generation pipeline from prompt input to final im
 │  │    └── NO ──▼                               │                     │
 │  │                                             │                     │
 │  │  Has conditioning images?                   │                     │
-│  │  (depthMapDataUrl OR poseImageDataUrl       │                     │
-│  │   OR lightingMapDataUrl OR styleExemplar)   │                     │
+│  │  (depthMapDataUrl OR poseImageDataUrl        │                     │
+│  │   OR styleExemplar)                         │                     │
 │  │    ├── YES ──► CONTROLNET PATH              │                     │
 │  │    └── NO ──► TEXT-ONLY PATH                │                     │
 │  └─────────────────────────────────────────────┘                     │
@@ -122,19 +112,18 @@ Technical specification of the generation pipeline from prompt input to final im
 │                                                                      │
 │  fal-ai/flux-general                                                 │
 │  ├── prompt: enriched text (style + camera + spatial + original +    │
-│  │           colors + lighting + pose)                               │
+│  │           colors + pose)                                          │
 │  ├── image_size: "square_hd" (1024x1024)                            │
 │  ├── controlnet_unions:                                              │
-│  │     path: "Shakker-Labs/FLUX.1-dev-ControlNet-Union-Pro"          │
+│  │     path: "Shakker-Labs/FLUX.1-dev-ControlNet-Union-Pro-2.0"      │
 │  │     controls:                                                     │
-│  │       ├── depth map ──── scale 0.45 ── from spatial OR camera     │
-│  │       ├── pose skeleton ── scale 0.50 ── from pose editor         │
-│  │       └── lighting map ── scale 0.20 ── from lighting gizmo      │
+│  │       ├── depth map ── scale 0.8, end 0.8 ── from spatial regions │
+│  │       └── pose skeleton ── scale 0.9, end 0.65 ── from pose editor│
 │  └── ip_adapters: (if style exemplar URL provided)                   │
 │        └── scale: user-defined (0.1-1.0)                             │
 │                                                                      │
 │  Image upload: base64 PNG → fal.storage.upload(File) → public URL    │
-│  Model: FLUX.1 [dev] with ControlNet Union Pro adapter               │
+│  Model: FLUX.1 [dev] with ControlNet Union Pro 2.0 adapter           │
 └──────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -157,7 +146,7 @@ Technical specification of the generation pipeline from prompt input to final im
 │  ├── Image viewer with pipeline badge                                │
 │  ├── Info (i) button ──► XAI popup showing:                          │
 │  │     ├── Enriched prompt text                                      │
-│  │     ├── Conditioning image thumbnails (depth, pose, lighting)     │
+│  │     ├── Conditioning image thumbnails (depth, pose)               │
 │  │     ├── Pipeline/model info                                       │
 │  │     └── Collapsible full parameters                               │
 │  └── Iteration history thumbnails                                    │
@@ -198,30 +187,21 @@ with colored badges + popover triggers
 
 ┌─────────────────┐ ┌──────────────────────┐ ┌─────────────────┐
 │ Spatial Canvas │────►│ renderDepthMap() │────►│ ControlNet │
-│ (drag regions) │ │ Soft ellipses, │ │ Union Pro │
-│ │ │ brighter=nearer │ │ mode: "depth" │
+│ (drag regions) │ │ Sharp rectangles, │ │ Union Pro │
+│ │ │ black bg, 0-255 │ │ mode: "depth" │
 └─────────────────┘ └──────────────────────┘ │ scale: 0.45 │
 └─────────────────┘
-┌─────────────────┐ ┌──────────────────────┐ ┌─────────────────┐
-│ Camera Controls │────►│ renderCameraDepthMap()│────►│ ControlNet │
-│ (elev/azimuth) │ │ Bird's eye: uniform │ │ Union Pro │
-│ │ │ Worm's eye: sky-heavy │ │ mode: "depth" │
-└─────────────────┘ │ Eye level: horizon │ │ scale: 0.45 │
-└──────────────────────┘ └─────────────────┘
+┌─────────────────┐ ┌─────────────────┐
+│ Camera Controls │─────────────────────────────────►│ Text enrichment │
+│ (elev/azimuth) │ angle description prepended │ (no ControlNet) │
+└─────────────────┘ └─────────────────┘
 
 ┌─────────────────┐ ┌──────────────────────┐ ┌─────────────────┐
 │ Pose Editor │────►│ renderPoseSkeleton() │────►│ ControlNet │
 │ (Gemini 4x var) │ │ OpenPose format: │ │ Union Pro │
 │ │ │ colored limbs, 10px │ │ mode: "pose" │
-└─────────────────┘ │ white joints 16/9px │ │ scale: 0.50 │
+└─────────────────┘ │ white joints 16/9px │ │ scale: 0.60 │
 └──────────────────────┘ └─────────────────┘
-
-┌─────────────────┐ ┌──────────────────────┐ ┌─────────────────┐
-│ Lighting Gizmo │────►│ renderLightingMap() │────►│ ControlNet │
-│ (drag lights) │ │ Radial gradients, │ │ Union Pro │
-│ │ │ color temp → RGB │ │ mode: "depth" │
-└─────────────────┘ └──────────────────────┘ │ scale: 0.20 │
-└─────────────────┘
 ┌─────────────────┐ ┌─────────────────┐
 │ Color Picker │─────────────────────────────────►│ Text enrichment │
 │ (context-aware) │ hex + name prepended │ (no ControlNet) │
@@ -250,16 +230,14 @@ The enriched prompt is constructed with **style and camera PREPENDED** (models w
 [3] Composition: {spatial region descriptions}.
 [4] {ORIGINAL USER PROMPT}
 [5] Colors: {color selections}.
-[6] Lighting: {lighting description}.
-[7] Subject pose: {pose name}.
+[6] Subject pose: {pose name}.
 
 ```
 
 ## Priority / Override Rules
 
-- Spatial depth map **overrides** camera depth map (spatial is more specific)
-- Camera depth map used **only when no spatial regions exist**
-- ControlNet controls are **stacked** in one Union model call (depth + pose + lighting)
+- Camera uses **text enrichment only** (no ControlNet depth map)
+- ControlNet controls are **stacked** in one Union model call (depth + pose)
 - Text enrichment **always happens** regardless of ControlNet path
 - Gemini image gen **always falls back** to fal.ai Flux General on failure
 ```

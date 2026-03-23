@@ -30,7 +30,7 @@ npm run build    # Production build
 | ----------------------------- | ------------------------------------------------------------------------------------------- |
 | `lib/pipeline-router.ts`      | Decides which pipeline to use, builds enriched prompt, collects conditioning info           |
 | `lib/fal.ts`                  | Uploads conditioning images to fal storage, calls Flux General with ControlNet Union        |
-| `lib/conditioning.ts`         | Client-side Canvas rendering: depth maps, pose skeletons, camera perspective, lighting maps |
+| `lib/conditioning.ts`         | Client-side Canvas rendering: depth maps, pose skeletons                                    |
 | `lib/gemini.ts`               | Token detection (structured JSON), pose variations (4x), image generation                   |
 | `components/prompt-input.tsx` | Inline token annotations, popover widgets, debounced detection                              |
 
@@ -40,17 +40,19 @@ npm run build    # Production build
 {
   "controlnet_unions": [
     {
-      "path": "Shakker-Labs/FLUX.1-dev-ControlNet-Union-Pro",
+      "path": "Shakker-Labs/FLUX.1-dev-ControlNet-Union-Pro-2.0",
       "controls": [
         {
           "control_image_url": "<fal storage URL>",
           "control_mode": "depth",
-          "conditioning_scale": 0.45
+          "conditioning_scale": 0.45,
+          "end_percentage": 0.4
         },
         {
           "control_image_url": "<fal storage URL>",
           "control_mode": "pose",
-          "conditioning_scale": 0.5
+          "conditioning_scale": 0.9,
+          "end_percentage": 0.65
         }
       ]
     }
@@ -58,13 +60,12 @@ npm run build    # Production build
 }
 ```
 
-### Conditioning scales (tuned)
+### Conditioning scales (per Union Pro 2.0 recommended values)
 
-| Signal                 | Scale | Notes                                                           |
-| ---------------------- | ----- | --------------------------------------------------------------- |
-| Depth (spatial/camera) | 0.45  | Higher = more geometric control, but crude maps distort at >0.6 |
-| Pose                   | 0.50  | OpenPose format, thicker limbs (10px) for better detection      |
-| Lighting               | 0.20  | Very subtle guide — lighting mostly driven by text              |
+| Signal           | Scale | End % | Notes                                                          |
+| ---------------- | ----- | ----- | -------------------------------------------------------------- |
+| Depth (spatial)  | 0.45  | 0.40  | Blurred rectangles, black bg, full 0-255 range                |
+| Pose             | 0.90  | 0.65  | OpenPose format, thicker limbs (10px) for better detection     |
 
 ### Gotchas
 
@@ -74,4 +75,3 @@ npm run build    # Production build
 - Shadcn v4 base-nova: no `asChild`, Slider returns `number | readonly number[]`, PopoverTrigger wraps `<span>` not `<button>`
 - Gemini image gen model: `gemini-2.5-flash-preview-image-generation` (frequently changes, fallback to fal.ai is robust)
 - `Math.random()` in SSR components causes hydration mismatch — use `useState` initializer
-- Camera depth map must vary by elevation type: bird's eye ≠ eye level ≠ worm's eye (distinct geometries, not just gradient shifts)

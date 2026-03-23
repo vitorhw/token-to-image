@@ -125,23 +125,6 @@ export const TAXONOMY: TaxonomyEntry[] = [
     widgetDescription: "Pose gallery with skeleton overlay editor",
     literatureSource: "Block and Detail (UIST 2024), TaleBrush (CHI 2022)",
   },
-  {
-    category: "lighting",
-    label: "Lighting",
-    subcategory: "Light Position & Quality",
-    patterns: [
-      "lighting", "light", "shadow", "dramatic", "soft light", "hard light",
-      "backlit", "side lighting", "rim light", "golden hour", "blue hour",
-      "studio lighting", "natural light", "artificial light", "neon",
-      "candlelight", "moonlight", "sunlight", "spotlight", "ambient",
-      "diffused", "harsh", "warm light", "cool light", "glow", "radiant",
-      "illuminated", "moody",
-    ],
-    examples: ["A portrait with dramatic side lighting", "Soft diffused lighting on a product"],
-    underspecification: "Light direction, intensity, color temperature, number of sources",
-    widgetDescription: "Light position gizmo with intensity and color controls",
-    literatureSource: "DiLightNet (SIGGRAPH 2024), IC-Light",
-  },
 ];
 
 export function getCategoryLabel(category: TokenCategory): string {

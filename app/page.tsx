@@ -86,6 +86,10 @@ function reducer(state: ExtendedAppState, action: Action): ExtendedAppState {
 
 export default function Home() {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [debugConditioningImages, setDebugConditioningImages] = useState<
+    { type: string; dataUrl: string; scale: number }[]
+  >([]);
+  const [useTestDepthMap, setUseTestDepthMap] = useState(false);
   const detectAbortRef = useRef<AbortController | null>(null);
 
   const configuredWidgets = useMemo(() => {
@@ -98,7 +102,6 @@ export default function Home() {
     }
     if (ws.styleSelection?.styleName) configured.add("style");
     if (ws.poseSelection?.keypoints?.length) configured.add("pose");
-    if (ws.lightingSettings?.lights.length) configured.add("lighting");
     if (ws.spatialRegions?.length) {
       configured.add("spatial_position");
       configured.add("spatial_size");
@@ -140,26 +143,28 @@ export default function Home() {
     const conditioning = await import("@/lib/conditioning");
     const widgetStateWithImages = { ...state.widgetState };
 
-    // Camera angle → always render as its own depth map conditioning
-    if (state.widgetState.cameraSettings) {
-      widgetStateWithImages.depthMapDataUrl = conditioning.renderCameraDepthMap(state.widgetState.cameraSettings);
-      console.log("[client] Rendered camera depth map");
-    }
-    // Spatial regions → depth map (overrides camera if both exist, since spatial is more specific)
-    if (state.widgetState.spatialRegions?.length) {
+    // Spatial regions → depth map (or test depth map for diagnostics)
+    if (useTestDepthMap) {
+      widgetStateWithImages.depthMapDataUrl = conditioning.renderTestDepthMap();
+      console.log("[client] Using TEST depth map");
+    } else if (state.widgetState.spatialRegions?.length) {
       widgetStateWithImages.depthMapDataUrl = conditioning.renderDepthMap(state.widgetState.spatialRegions);
-      console.log("[client] Rendered spatial depth map (overrides camera)");
+      console.log("[client] Rendered spatial depth map");
     }
     // Pose keypoints → skeleton image
     if (state.widgetState.poseSelection?.keypoints.length) {
       widgetStateWithImages.poseImageDataUrl = conditioning.renderPoseSkeleton(state.widgetState.poseSelection.keypoints);
       console.log("[client] Rendered pose skeleton");
     }
-    // Lighting → light map
-    if (state.widgetState.lightingSettings?.lights.length) {
-      widgetStateWithImages.lightingMapDataUrl = conditioning.renderLightingMap(state.widgetState.lightingSettings.lights);
-      console.log("[client] Rendered lighting map");
+    // Capture raw conditioning images for debug UI
+    const debugImages: { type: string; dataUrl: string; scale: number }[] = [];
+    if (widgetStateWithImages.depthMapDataUrl) {
+      debugImages.push({ type: "depth", dataUrl: widgetStateWithImages.depthMapDataUrl, scale: 0.55 });
     }
+    if (widgetStateWithImages.poseImageDataUrl) {
+      debugImages.push({ type: "pose", dataUrl: widgetStateWithImages.poseImageDataUrl, scale: 0.6 });
+    }
+    setDebugConditioningImages(debugImages);
 
     dispatch({ type: "SET_GENERATION_STATUS", status: "Sending to pipeline..." });
 
@@ -191,7 +196,7 @@ export default function Home() {
       clearInterval(statusInterval);
       dispatch({ type: "SET_GENERATING", isGenerating: false });
     }
-  }, [state.prompt, state.widgetState, state.currentImage]);
+  }, [state.prompt, state.widgetState, state.currentImage, useTestDepthMap]);
 
   const currentEnrichedPrompt = state.currentImage
     ? state.enrichedPrompts.get(state.currentImage.timestamp)
@@ -259,6 +264,9 @@ export default function Home() {
                 isGenerating={state.isGenerating}
                 generationStatus={state.generationStatus}
                 enrichedPrompt={currentEnrichedPrompt}
+                debugConditioningImages={debugConditioningImages}
+                useTestDepthMap={useTestDepthMap}
+                onToggleTestDepthMap={setUseTestDepthMap}
               />
             ) : !state.prompt.trim() ? (
               <PromptSuggestions

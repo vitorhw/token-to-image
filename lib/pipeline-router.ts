@@ -73,11 +73,6 @@ function buildEnrichedPrompt(prompt: string, ws: WidgetState): string {
     parts.push(`Colors: ${descs.join(", ")}.`);
   }
 
-  // Lighting
-  if (ws.lightingSettings?.lights.length) {
-    parts.push(`Lighting: ${ws.lightingSettings.description}.`);
-  }
-
   // Pose
   if (ws.poseSelection?.sourceName) {
     parts.push(`Subject pose: ${ws.poseSelection.sourceName}.`);
@@ -104,9 +99,6 @@ function buildInfoSummary(enrichedPrompt: string, ws: WidgetState, condImages: a
   if (ws.colorSelections?.length) {
     lines.push(`Colors: ${ws.colorSelections.map(c => `${c.target}=${c.name}`).join(", ")}`);
   }
-  if (ws.lightingSettings?.description) {
-    lines.push(`Lighting: ${ws.lightingSettings.description}`);
-  }
   if (ws.poseSelection?.sourceName) {
     lines.push(`Pose: ${ws.poseSelection.sourceName}`);
   }
@@ -118,7 +110,7 @@ function buildInfoSummary(enrichedPrompt: string, ws: WidgetState, condImages: a
 }
 
 function hasConditioningImages(ws: WidgetState): boolean {
-  return !!(ws.depthMapDataUrl || ws.poseImageDataUrl || ws.lightingMapDataUrl || ws.styleSelection?.exemplarUrl);
+  return !!(ws.depthMapDataUrl || ws.poseImageDataUrl || ws.styleSelection?.exemplarUrl);
 }
 
 export async function routeGeneration(input: PipelineInput): Promise<GenerationResult> {
