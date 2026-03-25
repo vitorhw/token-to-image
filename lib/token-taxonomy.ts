@@ -8,6 +8,8 @@ export interface TaxonomyEntry {
   examples: string[];
   underspecification: string;
   widgetDescription: string;
+  conditioningSignal: string;
+  conditioningTarget: string;
   literatureSource: string;
 }
 
@@ -15,49 +17,32 @@ export const TAXONOMY: TaxonomyEntry[] = [
   {
     category: "spatial_position",
     label: "Spatial Position",
-    subcategory: "Position",
+    subcategory: "Position, Size & Depth",
     patterns: [
       "left of", "right of", "next to", "beside", "near", "in front of",
       "behind", "above", "below", "between", "in the corner", "center",
       "middle", "edge", "side", "top", "bottom", "foreground", "background",
       "facing", "towards", "away from", "surrounding", "along", "across",
-    ],
-    examples: ["A bird in the corner of the image", "A cat sitting next to the fireplace"],
-    underspecification: "Which exact position, distance from edges, orientation",
-    widgetDescription: "Spatial canvas with draggable regions",
-    literatureSource: "WorldSmith (UIST 2023), LayoutDiffusion (2023)",
-  },
-  {
-    category: "spatial_size",
-    label: "Object Size",
-    subcategory: "Size",
-    patterns: [
       "large", "small", "tiny", "huge", "massive", "enormous", "big",
       "little", "tall", "short", "wide", "narrow", "miniature", "giant",
-    ],
-    examples: ["A large tree in a meadow"],
-    underspecification: "Height in pixels, proportion of frame, relative scale",
-    widgetDescription: "Resizable bounding box with scale reference",
-    literatureSource: "GLIGEN (CVPR 2023), WorldSmith (UIST 2023)",
-  },
-  {
-    category: "spatial_depth",
-    label: "Depth & Layering",
-    subcategory: "Depth",
-    patterns: [
       "in the foreground", "in the background", "far away", "close up",
-      "distant", "depth", "layers", "behind", "in front", "overlapping",
-      "receding", "perspective",
+      "distant", "depth", "layers", "overlapping", "receding", "perspective",
     ],
-    examples: ["A forest with trees in the foreground"],
-    underspecification: "Depth position, overlap handling, atmospheric perspective",
-    widgetDescription: "Layer panel with depth map painter",
-    literatureSource: "ControlNet Depth (Zhang & Agrawala 2023), LayeringDiff (2025)",
+    examples: [
+      "A bird in the corner of the image",
+      "A large tree in a meadow",
+      "A forest with trees in the foreground",
+    ],
+    underspecification: "Exact position, size proportion, and depth layering",
+    widgetDescription: "Spatial canvas with draggable, resizable regions and depth control",
+    conditioningSignal: "Segmentation map (position + size) AND depth map (layering)",
+    conditioningTarget: "EasyControls seg+spatial (position/size) + ControlNet depth (layering)",
+    literatureSource: "WorldSmith (UIST 2023), ControlNet Depth (Zhang & Agrawala 2023)",
   },
   {
     category: "color",
     label: "Color",
-    subcategory: "Hue Selection",
+    subcategory: "Hue & Palette",
     patterns: [
       "red", "blue", "green", "yellow", "purple", "orange", "pink",
       "brown", "black", "white", "gray", "grey", "golden", "silver",
@@ -68,13 +53,15 @@ export const TAXONOMY: TaxonomyEntry[] = [
     ],
     examples: ["A woman in a red dress", "A photo with earthy tones"],
     underspecification: "Exact hue, saturation, brightness, which variant",
-    widgetDescription: "Color picker with palette presets and sample-from-reference",
+    widgetDescription: "Color picker with context-aware palette presets",
+    conditioningSignal: "Color name + hex code appended to prompt",
+    conditioningTarget: "Text prompt enrichment (e.g. 'Colors: dress: Crimson (#DC143C)')",
     literatureSource: "Color Portraits (CHI 2015), Palette Purpose Prototype (CHI 2024)",
   },
   {
     category: "camera_angle",
     label: "Camera Angle",
-    subcategory: "Viewpoint",
+    subcategory: "Viewpoint & Lens",
     patterns: [
       "bird's eye", "bird eye", "aerial", "top down", "low angle",
       "high angle", "eye level", "worm's eye", "overhead", "isometric",
@@ -85,14 +72,16 @@ export const TAXONOMY: TaxonomyEntry[] = [
       "lens", "focal",
     ],
     examples: ["A bird's eye view of the city", "A portrait with blurry background"],
-    underspecification: "Exact angle, altitude, lens correction, focal length",
-    widgetDescription: "Camera angle gizmo with elevation/azimuth dials",
+    underspecification: "Exact elevation angle, azimuth, focal length",
+    widgetDescription: "Camera gizmo with elevation, rotation, and focal length controls",
+    conditioningSignal: "Perspective depth map (gradient encoding camera viewpoint) + text enrichment",
+    conditioningTarget: "ControlNet Union Pro 2.0 — depth mode (scale 0.45, end 40%) + prompt prepend",
     literatureSource: "Canvas3D (2025), Liu & Chilton (CHI 2022)",
   },
   {
     category: "style",
     label: "Art Style",
-    subcategory: "Style",
+    subcategory: "Visual Style",
     patterns: [
       "impressionist", "watercolor", "oil painting", "sketch", "cartoon",
       "anime", "pixel art", "photorealistic", "realistic", "abstract",
@@ -104,26 +93,11 @@ export const TAXONOMY: TaxonomyEntry[] = [
       "professional", "artistic", "style", "aesthetic",
     ],
     examples: ["A painting in impressionist style", "A cinematic scene"],
-    underspecification: "Specific style details, era, technique, brush style",
-    widgetDescription: "Style exemplar gallery with strength slider",
+    underspecification: "Specific technique, era, brush style, level of stylization",
+    widgetDescription: "Style gallery with 16 presets and strength slider",
+    conditioningSignal: "Style name prepended to prompt with strength weighting",
+    conditioningTarget: "Text prompt enrichment (e.g. 'Impressionist style.' prepended at start)",
     literatureSource: "PromptMagician (TVCG 2024), DreamSheets (CHI 2024)",
-  },
-  {
-    category: "pose",
-    label: "Pose & Gesture",
-    subcategory: "Pose",
-    patterns: [
-      "running", "walking", "sitting", "standing", "jumping", "dancing",
-      "waving", "pointing", "reaching", "leaning", "crouching", "lying",
-      "kneeling", "bending", "stretching", "arms", "hand", "gesture",
-      "pose", "posture", "stance", "confident", "mid-leap", "mid-",
-      "expression", "smile", "frown", "mysterious", "angry", "sad",
-      "happy", "laughing", "crying",
-    ],
-    examples: ["A person waving goodbye", "A confident businesswoman"],
-    underspecification: "Exact body position, joint angles, gesture phase",
-    widgetDescription: "Pose gallery with skeleton overlay editor",
-    literatureSource: "Block and Detail (UIST 2024), TaleBrush (CHI 2022)",
   },
 ];
 

@@ -6,10 +6,10 @@ import { ImageViewer } from "@/components/image-viewer";
 import { PromptSuggestions } from "@/components/prompt-suggestions";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Info } from "lucide-react";
+import { Info, FlaskConical } from "lucide-react";
 import { TAXONOMY } from "@/lib/token-taxonomy";
+import Link from "next/link";
 import {
   AppState,
   DetectedToken,
@@ -70,7 +70,6 @@ function reducer(state: ExtendedAppState, action: Action): ExtendedAppState {
         ...state,
         currentImage: action.result,
         generationHistory: [...state.generationHistory, action.result],
-        widgetState: { ...state.widgetState, maskRegion: undefined },
         generationStatus: "",
         enrichedPrompts: newPrompts,
       };
@@ -84,6 +83,8 @@ function reducer(state: ExtendedAppState, action: Action): ExtendedAppState {
   }
 }
 
+// Removed — no emojis in UI
+
 export default function Home() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [debugConditioningImages, setDebugConditioningImages] = useState<
@@ -96,18 +97,15 @@ export default function Home() {
     const configured = new Set<TokenCategory>();
     const ws = state.widgetState;
     if (ws.colorSelections?.length) configured.add("color");
-    // Camera: only configured if user changed from defaults
     if (ws.cameraSettings && (ws.cameraSettings.elevation !== 0 || ws.cameraSettings.azimuth !== 0 || ws.cameraSettings.focalLength !== 50)) {
       configured.add("camera_angle");
     }
     if (ws.styleSelection?.styleName) configured.add("style");
-    if (ws.poseSelection?.keypoints?.length) configured.add("pose");
     if (ws.spatialRegions?.length) {
       configured.add("spatial_position");
       configured.add("spatial_size");
       configured.add("spatial_depth");
     }
-    if (ws.maskRegion) configured.add("masking");
     return configured;
   }, [state.widgetState]);
 
@@ -139,30 +137,39 @@ export default function Home() {
     dispatch({ type: "SET_GENERATING", isGenerating: true });
     dispatch({ type: "SET_GENERATION_STATUS", status: "Rendering conditioning images..." });
 
-    // Render ALL conditioning images from widget state (client-side)
+    // Render conditioning images from widget state (client-side)
     const conditioning = await import("@/lib/conditioning");
     const widgetStateWithImages = { ...state.widgetState };
+    const ws = state.widgetState;
 
-    // Spatial regions → depth map (or test depth map for diagnostics)
+    const hasSpatial = !!ws.spatialRegions?.length;
+    const hasCamera = !!(ws.cameraSettings && (
+      ws.cameraSettings.elevation !== 0 || ws.cameraSettings.azimuth !== 0 || ws.cameraSettings.focalLength !== 50
+    ));
+
+    // Render depth map based on what widgets are active
     if (useTestDepthMap) {
       widgetStateWithImages.depthMapDataUrl = conditioning.renderTestDepthMap();
       console.log("[client] Using TEST depth map");
-    } else if (state.widgetState.spatialRegions?.length) {
-      widgetStateWithImages.depthMapDataUrl = conditioning.renderDepthMap(state.widgetState.spatialRegions);
-      console.log("[client] Rendered spatial depth map");
+    } else if (hasSpatial && hasCamera) {
+      widgetStateWithImages.depthMapDataUrl = conditioning.renderCombinedDepthMap(
+        ws.cameraSettings!, ws.spatialRegions!,
+      );
+      console.log("[client] Rendered COMBINED depth map (camera + spatial)");
+    } else if (hasCamera) {
+      widgetStateWithImages.depthMapDataUrl = conditioning.renderCameraDepthMap(ws.cameraSettings!);
+      console.log("[client] Rendered CAMERA perspective depth map");
+    } else if (hasSpatial) {
+      widgetStateWithImages.depthMapDataUrl = conditioning.renderSpatialDepthMap(ws.spatialRegions!);
+      console.log("[client] Rendered SPATIAL depth map");
     }
-    // Pose keypoints → skeleton image
-    if (state.widgetState.poseSelection?.keypoints.length) {
-      widgetStateWithImages.poseImageDataUrl = conditioning.renderPoseSkeleton(state.widgetState.poseSelection.keypoints);
-      console.log("[client] Rendered pose skeleton");
-    }
-    // Capture raw conditioning images for debug UI
+
+    // Capture conditioning images for debug UI
     const debugImages: { type: string; dataUrl: string; scale: number }[] = [];
     if (widgetStateWithImages.depthMapDataUrl) {
-      debugImages.push({ type: "depth", dataUrl: widgetStateWithImages.depthMapDataUrl, scale: 0.55 });
-    }
-    if (widgetStateWithImages.poseImageDataUrl) {
-      debugImages.push({ type: "pose", dataUrl: widgetStateWithImages.poseImageDataUrl, scale: 0.6 });
+      const label = hasSpatial && hasCamera ? "combined (camera+spatial)"
+        : hasCamera ? "camera perspective" : "spatial depth";
+      debugImages.push({ type: `depth: ${label}`, dataUrl: widgetStateWithImages.depthMapDataUrl, scale: 0.8 });
     }
     setDebugConditioningImages(debugImages);
 
@@ -183,7 +190,6 @@ export default function Home() {
         body: JSON.stringify({
           prompt: state.prompt,
           widgetState: widgetStateWithImages,
-          previousImageUrl: state.currentImage?.imageUrl,
         }),
       });
       const data = await res.json();
@@ -196,7 +202,7 @@ export default function Home() {
       clearInterval(statusInterval);
       dispatch({ type: "SET_GENERATING", isGenerating: false });
     }
-  }, [state.prompt, state.widgetState, state.currentImage, useTestDepthMap]);
+  }, [state.prompt, state.widgetState, useTestDepthMap]);
 
   const currentEnrichedPrompt = state.currentImage
     ? state.enrichedPrompts.get(state.currentImage.timestamp)
@@ -207,6 +213,11 @@ export default function Home() {
       {/* Header */}
       <header className="flex shrink-0 items-center justify-between border-b px-6 py-3">
         <h1 className="text-lg font-semibold tracking-tight">Tokens to Image</h1>
+        <div className="flex items-center gap-2">
+        <Link href="/test" className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent text-muted-foreground">
+          <FlaskConical className="h-4 w-4" />
+          Test Suite
+        </Link>
         <Dialog>
           <DialogTrigger>
             <span className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent cursor-pointer">
@@ -214,31 +225,41 @@ export default function Home() {
               Supported Tokens
             </span>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-3xl">
             <DialogHeader>
-              <DialogTitle>Token Taxonomy</DialogTitle>
+              <DialogTitle>Supported Widgets</DialogTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                Each widget detects ambiguous tokens in your prompt and produces a conditioning signal for precise control.
+              </p>
             </DialogHeader>
-            <ScrollArea className="max-h-[60vh]">
+            <ScrollArea className="max-h-[65vh]">
               <div className="space-y-4 pr-4">
                 {TAXONOMY.map((entry) => (
-                  <div key={entry.category} className="rounded-lg border p-3">
-                    <div className="flex items-center gap-2">
+                  <div key={entry.category} className="rounded-lg border">
+                    <div className="flex items-baseline justify-between px-4 pt-3 pb-1">
                       <h4 className="text-sm font-semibold">{entry.label}</h4>
-                      <Badge variant="outline" className="text-xs">{entry.subcategory}</Badge>
+                      <span className="text-[11px] text-muted-foreground">{entry.subcategory}</span>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">{entry.underspecification}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      <span className="font-medium">Widget:</span> {entry.widgetDescription}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      <span className="font-medium">Source:</span> {entry.literatureSource}
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-1">
+
+                    <p className="px-4 text-xs text-muted-foreground">{entry.underspecification}</p>
+
+                    <div className="mt-2 mx-4 rounded-md bg-muted/40 p-3 space-y-1.5 text-xs">
+                      <div className="grid grid-cols-[5rem_1fr] gap-x-2">
+                        <span className="font-medium text-muted-foreground">Signal</span>
+                        <span>{entry.conditioningSignal}</span>
+                      </div>
+                      <div className="grid grid-cols-[5rem_1fr] gap-x-2">
+                        <span className="font-medium text-muted-foreground">Sent to</span>
+                        <span>{entry.conditioningTarget}</span>
+                      </div>
+                    </div>
+
+                    <div className="px-4 py-3 flex flex-wrap gap-1">
                       {entry.patterns.slice(0, 12).map((p) => (
-                        <Badge key={p} variant="secondary" className="text-[10px]">{p}</Badge>
+                        <span key={p} className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{p}</span>
                       ))}
                       {entry.patterns.length > 12 && (
-                        <Badge variant="secondary" className="text-[10px]">+{entry.patterns.length - 12} more</Badge>
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">+{entry.patterns.length - 12} more</span>
                       )}
                     </div>
                   </div>
@@ -247,11 +268,11 @@ export default function Home() {
             </ScrollArea>
           </DialogContent>
         </Dialog>
+        </div>
       </header>
 
-      {/* Chat-style main area */}
+      {/* Main area */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-3xl px-4 py-6">
             {state.currentImage || state.isGenerating ? (
@@ -272,7 +293,6 @@ export default function Home() {
               <PromptSuggestions
                 onSelect={(p) => {
                   dispatch({ type: "SET_PROMPT", prompt: p });
-                  // Set the contentEditable text
                   const el = document.querySelector("[contenteditable]");
                   if (el) el.textContent = p;
                 }}
@@ -295,7 +315,6 @@ export default function Home() {
               widgetState={state.widgetState}
               onWidgetStateChange={(s) => dispatch({ type: "UPDATE_WIDGET_STATE", state: s })}
               configuredWidgets={configuredWidgets}
-              currentImageUrl={state.currentImage?.imageUrl}
             />
           </div>
         </div>

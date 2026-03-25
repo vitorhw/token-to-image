@@ -7,32 +7,31 @@ interface PromptSuggestionsProps {
   onSelect: (prompt: string) => void;
 }
 
-// All prompts are designed to trigger EVERY widget type:
-// pose, spatial_position/depth, color, lighting, camera_angle, style
+// Prompts designed to trigger the 4 supported widgets:
+// spatial_position/size/depth, color, camera_angle, style
 const SUGGESTION_POOL = [
-  // Group 1: People + Nature
-  "A dancer mid-leap on a cliff edge overlooking a turquoise ocean at golden hour, impressionist style, shot from a low angle",
-  "An elderly fisherman casting his net in the foreground of a misty lake at dawn, watercolor style, dramatic side lighting, bird's eye view",
-  "A child reaching up to catch fireflies in a dark forest, the warm glow illuminating their face, cinematic style, close-up shot",
+  // Nature + Spatial
+  "A large red barn on the left side of a golden wheat field, with distant blue mountains in the background, watercolor style, wide angle shot",
+  "A tiny white boat in the foreground of a turquoise ocean, with a lighthouse on the right side in the background, cinematic style, bird's eye view",
+  "A green tree in the center foreground with a small cottage in the background on the right, impressionist style, eye level shot",
 
-  // Group 2: Urban + Professional
-  "A street musician playing violin next to a red telephone booth in the rain, neon reflections on wet cobblestones, cyberpunk style, low angle shot",
-  "A confident architect presenting blueprints in a modern glass office, soft diffused lighting, the city skyline visible in the background, photorealistic",
-  "A skateboarder mid-trick above a graffiti-covered halfpipe, purple and orange sunset behind them, pop art style, wide angle",
+  // Urban + Color
+  "A bright yellow taxi next to a red telephone booth on a city street, with tall buildings in the background, pop art style, low angle shot",
+  "A neon purple sign in the foreground with a dark alley stretching into the background, cyberpunk style, wide angle",
+  "A crimson vintage car parked on the left side of a cobblestone street, golden hour lighting, cinematic style, telephoto shot",
 
-  // Group 3: Fantasy + Conceptual
-  "A samurai standing in the foreground of a cherry blossom garden, crimson armor, soft moonlight casting long shadows, anime style, close-up portrait",
-  "An astronaut floating next to a giant blue jellyfish in deep space, bioluminescent glow, surreal style, bird's eye view",
-  "A witch reading a glowing book in a cozy treehouse, warm candlelight, autumn forest visible through the window, fantasy illustration style",
+  // Fantasy + Style
+  "A large crystal castle in the center background with a small glowing orb in the foreground, fantasy illustration style, low angle shot",
+  "A white lighthouse on the right side of a cliff overlooking a deep blue ocean on the left, oil painting style, bird's eye view",
+  "A small golden crown on a velvet cushion in the foreground, with a grand throne room in the background, baroque style, close-up",
 
-  // Group 4: Animals + Scenes
-  "A majestic eagle soaring above a snowy mountain range in the foreground, dramatic storm clouds behind, golden light breaking through, cinematic wide angle",
-  "A curious fox sitting next to a vintage red lantern in a dark bamboo forest, soft warm lighting from below, watercolor style, eye level",
-  "A white horse galloping along a beach at sunset, waves crashing in the background, warm orange and purple sky, oil painting style, side angle",
+  // Animals + Composition
+  "A large orange cat on the left and a small grey mouse on the right, green garden background, watercolor style, eye level",
+  "A majestic eagle soaring in the foreground above a snowy mountain range in the background, cinematic style, low angle wide shot",
+  "A colorful parrot perched on a branch on the right side, with a tropical forest in the background, photorealistic style, close-up shot",
 ];
 
 export function PromptSuggestions({ onSelect }: PromptSuggestionsProps) {
-  // Pick 3 suggestions — use stable indices to avoid hydration mismatch
   const [suggestions] = useState(() => {
     const idx = typeof window !== "undefined" ? Math.floor(Math.random() * SUGGESTION_POOL.length) : 0;
     return [

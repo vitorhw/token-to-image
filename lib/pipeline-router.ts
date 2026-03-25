@@ -1,12 +1,10 @@
-import { WidgetState, GenerationResult, SpatialRegion } from "@/types/tokens";
+import { WidgetState, GenerationResult } from "@/types/tokens";
 import { generateWithGemini } from "./gemini";
-import { generateWithFlux, generateWithControls, inpaintWithFlux } from "./fal";
+import { generateWithFlux, generateWithControls } from "./fal";
 
 interface PipelineInput {
   prompt: string;
-  enrichedPrompt: string;
   widgetState: WidgetState;
-  previousImageUrl?: string;
 }
 
 function describePosition(x: number, width: number): string {
@@ -23,62 +21,67 @@ function describeDepth(depth: number): string {
 }
 
 /**
- * Build enriched prompt with widget state PREPENDED as structured instructions.
- * Models weight the start of the prompt more heavily.
+ * Build enriched prompt from widget state.
+ *
+ * CRITICAL: CLIP has a 77-token limit. Enrichment must be CONCISE.
+ * Keep total prompt under ~60 words. Most important info first.
+ * Color names only, no hex codes (tokenizers fragment them).
  */
-function buildEnrichedPrompt(prompt: string, ws: WidgetState): string {
-  const parts: string[] = [];
+export function buildEnrichedPrompt(prompt: string, ws: WidgetState): string {
+  const prefix: string[] = [];
+  const suffix: string[] = [];
 
-  // Style FIRST (most impactful on overall result)
+  // Style — short prefix
   if (ws.styleSelection?.styleName) {
-    parts.push(`${ws.styleSelection.styleName} style.`);
+    prefix.push(`${ws.styleSelection.styleName} style,`);
   }
 
-  // Camera angle — be very explicit, models need strong camera direction
+  // Camera — concise angle + lens
   if (ws.cameraSettings) {
     const cam = ws.cameraSettings;
-    let elev: string;
-    if (cam.elevation > 70) elev = "bird's eye view, camera directly above looking straight down, top-down aerial shot";
-    else if (cam.elevation > 30) elev = "high angle, camera looking down from above";
-    else if (cam.elevation < -50) elev = "extreme low angle, worm's eye view, camera on the ground looking up";
-    else if (cam.elevation < -20) elev = "low angle, camera below eye level looking up";
-    else elev = "eye level";
+    let angle = "";
+    if (cam.elevation > 70) angle = "top-down bird's eye view,";
+    else if (cam.elevation > 30) angle = "high angle shot,";
+    else if (cam.elevation < -50) angle = "extreme low angle worm's eye view,";
+    else if (cam.elevation < -20) angle = "low angle shot,";
 
-    const lens = cam.focalLength < 24 ? ", ultra wide angle lens" :
-      cam.focalLength < 35 ? ", wide angle lens" :
-      cam.focalLength > 100 ? ", telephoto lens with compressed perspective" :
-      cam.focalLength > 70 ? ", portrait lens with shallow depth of field" : "";
+    const lens = cam.focalLength < 24 ? " ultra wide angle," :
+      cam.focalLength < 35 ? " wide angle," :
+      cam.focalLength > 100 ? " telephoto," :
+      cam.focalLength > 70 ? " shallow depth of field," : "";
 
-    const facing = cam.azimuth > 45 && cam.azimuth <= 135 ? ", shot from the right side" :
-      cam.azimuth > 135 && cam.azimuth <= 225 ? ", shot from behind" :
-      cam.azimuth > 225 && cam.azimuth <= 315 ? ", shot from the left side" : "";
+    const facing = cam.azimuth > 45 && cam.azimuth <= 135 ? " from the right," :
+      cam.azimuth > 135 && cam.azimuth <= 225 ? " from behind," :
+      cam.azimuth > 225 && cam.azimuth <= 315 ? " from the left," : "";
 
-    parts.push(`${elev}${lens}${facing}.`);
+    if (angle || lens || facing) {
+      prefix.push(`${angle}${lens}${facing}`.replace(/,+$/, ","));
+    }
   }
 
-  // Spatial layout
+  // Spatial — brief position hints (depth map handles the precise layout)
   if (ws.spatialRegions?.length) {
     const descs = ws.spatialRegions.map(r =>
-      `${r.label} placed ${describePosition(r.x, r.width)}, ${describeDepth(r.depth)}`
+      `${r.label} ${describePosition(r.x, r.width)} ${describeDepth(r.depth)}`
     );
-    parts.push(`Composition: ${descs.join("; ")}.`);
+    suffix.push(descs.join(", "));
   }
 
-  // The original prompt in the middle
-  parts.push(prompt);
-
-  // Colors
+  // Colors — descriptive names only (no hex)
   if (ws.colorSelections?.length) {
-    const descs = ws.colorSelections.map(c => `${c.target}: ${c.name} (${c.hex})`);
-    parts.push(`Colors: ${descs.join(", ")}.`);
+    const descs = ws.colorSelections.map(c => `${c.name} ${c.target}`);
+    suffix.push(descs.join(", "));
   }
 
-  // Pose
-  if (ws.poseSelection?.sourceName) {
-    parts.push(`Subject pose: ${ws.poseSelection.sourceName}.`);
+  const result = [...prefix, prompt, ...suffix].join(" ");
+
+  // Safety: if still over ~75 words, truncate suffix
+  const words = result.split(/\s+/);
+  if (words.length > 70) {
+    return words.slice(0, 70).join(" ");
   }
 
-  return parts.join(" ");
+  return result;
 }
 
 function buildInfoSummary(enrichedPrompt: string, ws: WidgetState, condImages: any[]): string {
@@ -94,48 +97,38 @@ function buildInfoSummary(enrichedPrompt: string, ws: WidgetState, condImages: a
     lines.push(`\nCamera: elevation ${c.elevation}°, rotation ${c.azimuth}°, ${c.focalLength}mm`);
   }
   if (ws.spatialRegions?.length) {
-    lines.push(`Spatial: ${ws.spatialRegions.map(r => `"${r.label}" at x=${Math.round(r.x*100)}% depth=${Math.round(r.depth*100)}%`).join(", ")}`);
+    lines.push(`Spatial: ${ws.spatialRegions.map(r => `"${r.label}" at x=${Math.round(r.x*100)}% y=${Math.round(r.y*100)}% w=${Math.round(r.width*100)}% h=${Math.round(r.height*100)}% depth=${Math.round(r.depth*100)}%`).join(", ")}`);
   }
   if (ws.colorSelections?.length) {
     lines.push(`Colors: ${ws.colorSelections.map(c => `${c.target}=${c.name}`).join(", ")}`);
   }
-  if (ws.poseSelection?.sourceName) {
-    lines.push(`Pose: ${ws.poseSelection.sourceName}`);
-  }
   if (ws.styleSelection?.styleName) {
-    lines.push(`Style: ${ws.styleSelection.styleName}`);
+    lines.push(`Style: ${ws.styleSelection.styleName} (strength ${Math.round(ws.styleSelection.strength * 100)}%)`);
   }
 
   return lines.join("\n");
 }
 
 function hasConditioningImages(ws: WidgetState): boolean {
-  return !!(ws.depthMapDataUrl || ws.poseImageDataUrl || ws.styleSelection?.exemplarUrl);
+  return !!(ws.depthMapDataUrl || ws.segMapDataUrl);
 }
 
 export async function routeGeneration(input: PipelineInput): Promise<GenerationResult> {
-  const { widgetState: ws, previousImageUrl } = input;
+  const { widgetState: ws } = input;
   const enrichedPrompt = buildEnrichedPrompt(input.prompt, ws);
 
-  console.log(`[router] Enriched: "${enrichedPrompt.slice(0, 250)}"`);
+  console.log(`[router] Enriched: "${enrichedPrompt.slice(0, 300)}"`);
 
-  // Inpainting
-  if (ws.maskRegion && previousImageUrl) {
-    const r = await inpaintWithFlux(previousImageUrl, ws.maskRegion.dataUrl, ws.maskRegion.editPrompt || enrichedPrompt);
-    return { ...r, provider: "fal", pipeline: "Flux Inpainting", timestamp: Date.now(),
-      enrichedPrompt: buildInfoSummary(enrichedPrompt, ws, r.conditioningImages) };
-  }
-
-  // ControlNet path
+  // ControlNet path — spatial depth map present
   if (hasConditioningImages(ws)) {
-    console.log("[router] ControlNet pipeline");
+    console.log("[router] ControlNet pipeline (depth map)");
     const r = await generateWithControls({ prompt: enrichedPrompt, widgetState: ws });
-    return { ...r, provider: "fal", pipeline: "Flux + ControlNet", timestamp: Date.now(),
+    return { ...r, provider: "fal", pipeline: "Flux + ControlNet Depth", timestamp: Date.now(),
       enrichedPrompt: buildInfoSummary(enrichedPrompt, ws, r.conditioningImages) };
   }
 
-  // Text-only
-  console.log("[router] Text-only pipeline");
+  // Text-only (with enrichment from color/camera/style widgets)
+  console.log("[router] Text-only pipeline (with prompt enrichment)");
   try {
     const imageUrl = await generateWithGemini(enrichedPrompt);
     return { imageUrl, provider: "gemini", pipeline: "Gemini Flash", timestamp: Date.now(),

@@ -23,18 +23,15 @@ async function uploadDataUrl(dataUrl: string): Promise<string> {
   const file = new File([blob], "conditioning.png", { type: mime });
 
   console.log(`[fal] Uploading conditioning image: ${Math.round(buffer.length / 1024)}KB, mime: ${mime}`);
-
   const url = await fal.storage.upload(file);
-
   console.log(`[fal] Upload returned URL: ${url}`);
 
-  // Verify the uploaded URL is accessible
   try {
     const headRes = await fetch(url, { method: "HEAD" });
     if (headRes.ok) {
-      console.log(`[fal] Upload verified OK (status: ${headRes.status}, content-type: ${headRes.headers.get("content-type")})`);
+      console.log(`[fal] Upload verified OK (status: ${headRes.status})`);
     } else {
-      console.warn(`[fal] Upload verification FAILED (status: ${headRes.status}) for: ${url}`);
+      console.warn(`[fal] Upload verification FAILED (status: ${headRes.status})`);
     }
   } catch (err) {
     console.warn(`[fal] Upload verification ERROR: ${err instanceof Error ? err.message : err}`);
@@ -51,9 +48,7 @@ export async function generateWithFlux(prompt: string) {
     onQueueUpdate: (update: any) => {
       console.log(`[fal] Queue status: ${update.status}`);
       if ("logs" in update && update.logs?.length) {
-        for (const log of update.logs) {
-          console.log(`[fal] Server: ${log.message}`);
-        }
+        for (const log of update.logs) console.log(`[fal] Server: ${log.message}`);
       }
     },
   } as any);
@@ -72,30 +67,32 @@ export async function generateWithControls(options: {
   const controls: any[] = [];
   const conditioningImages: ConditioningImage[] = [];
 
+  // DEPTH MAP → ControlNet Union Pro depth mode
+  // Scale 0.8, end 0.8 — recommended by Shakker-Labs for depth
   if (widgetState.depthMapDataUrl) {
     const url = await uploadDataUrl(widgetState.depthMapDataUrl);
-    controls.push({ control_image_url: url, control_mode: "depth", conditioning_scale: 0.45, end_percentage: 0.4 });
-    conditioningImages.push({ label: "Depth / Camera Map", url, type: "depth" });
-    console.log("[fal] ControlNet DEPTH (scale: 0.8, end: 0.8)");
-  }
-
-  if (widgetState.poseImageDataUrl) {
-    const url = await uploadDataUrl(widgetState.poseImageDataUrl);
-    controls.push({ control_image_url: url, control_mode: "pose", conditioning_scale: 0.9, end_percentage: 0.65 });
-    conditioningImages.push({ label: "Pose Skeleton (ControlNet)", url, type: "pose" });
-    console.log("[fal] ControlNet POSE (scale: 0.9, end: 0.65)");
+    controls.push({
+      control_image_url: url,
+      control_mode: "depth",
+      conditioning_scale: 0.8,
+      end_percentage: 0.8,
+    });
+    conditioningImages.push({ label: "Depth Map (Camera + Spatial)", url, type: "depth" });
+    console.log("[fal] ControlNet DEPTH added (scale: 0.8, end: 0.8)");
   }
 
   if (controls.length > 0) {
-    input.controlnet_unions = [{ path: "Shakker-Labs/FLUX.1-dev-ControlNet-Union-Pro-2.0", controls }];
+    input.controlnet_unions = [{
+      path: "Shakker-Labs/FLUX.1-dev-ControlNet-Union-Pro-2.0",
+      controls,
+    }];
   }
 
-  if (widgetState.styleSelection?.exemplarUrl) {
-    input.ip_adapters = [{ path: widgetState.styleSelection.exemplarUrl, ip_adapter_scale: widgetState.styleSelection.strength }];
-    conditioningImages.push({ label: "Style Reference (IP-Adapter)", url: widgetState.styleSelection.exemplarUrl, type: "style" });
-  }
+  // NOTE: easycontrols (seg+spatial) is incompatible with controlnet_unions —
+  // combining them causes a tensor dimension mismatch in fal.ai's pipeline.
+  // Spatial positioning relies on depth map + concise prompt enrichment instead.
 
-  console.log("[fal] generateWithControls:", { controls: controls.length });
+  console.log("[fal] generateWithControls:", { controlnet: controls.length });
   console.log("[fal] Full input payload:", JSON.stringify(sanitizeForLog(input), null, 2));
 
   try {
@@ -105,9 +102,7 @@ export async function generateWithControls(options: {
       onQueueUpdate: (update: any) => {
         console.log(`[fal] Queue status: ${update.status}`);
         if ("logs" in update && update.logs?.length) {
-          for (const log of update.logs) {
-            console.log(`[fal] Server: ${log.message}`);
-          }
+          for (const log of update.logs) console.log(`[fal] Server: ${log.message}`);
         }
       },
     } as any);
@@ -116,12 +111,4 @@ export async function generateWithControls(options: {
     console.error("[fal] Error:", JSON.stringify(err.body ?? err.message));
     throw err;
   }
-}
-
-export async function inpaintWithFlux(imageUrl: string, maskUrl: string, prompt: string) {
-  const finalMaskUrl = maskUrl.startsWith("data:") ? await uploadDataUrl(maskUrl) : maskUrl;
-  const result = await fal.subscribe("fal-ai/flux-general/inpainting", {
-    input: { image_url: imageUrl, mask_url: finalMaskUrl, prompt, num_images: 1 },
-  } as any);
-  return { imageUrl: (result.data as any).images[0].url as string, conditioningImages: [{ label: "Inpainting Mask", url: finalMaskUrl, type: "mask" as const }] };
 }

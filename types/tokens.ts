@@ -4,9 +4,7 @@ export type TokenCategory =
   | "spatial_depth"
   | "color"
   | "camera_angle"
-  | "style"
-  | "pose"
-  | "masking";
+  | "style";
 
 export interface DetectedToken {
   text: string;
@@ -41,44 +39,24 @@ export interface CameraSettings {
   distance: number;
 }
 
-export interface PoseKeypoint {
-  name: string;
-  x: number;
-  y: number;
-  confidence: number;
-}
-
-export interface PoseSelection {
-  keypoints: PoseKeypoint[];
-  sourceName: string;
-}
-
 export interface StyleSelection {
-  exemplarUrl: string;
   styleName: string;
   strength: number;
-}
-
-export interface MaskRegion {
-  dataUrl: string;
-  editPrompt: string;
 }
 
 export interface WidgetState {
   spatialRegions?: SpatialRegion[];
   colorSelections?: ColorSelection[];
   cameraSettings?: CameraSettings;
-  poseSelection?: PoseSelection;
   styleSelection?: StyleSelection;
-  maskRegion?: MaskRegion;
   depthMapDataUrl?: string;
-  poseImageDataUrl?: string;
+  segMapDataUrl?: string; // Color-coded segmentation map for spatial layout (position + size)
 }
 
 export interface ConditioningImage {
   label: string;
   url: string; // fal storage URL or data URL
-  type: "depth" | "pose" | "style" | "mask";
+  type: "depth" | "segmentation";
 }
 
 export interface GenerationResult {

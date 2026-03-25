@@ -48,7 +48,7 @@ export function StyleGallery({ value, onChange, tokenText }: StyleGalleryProps) 
   );
 
   function selectStyle(name: string) {
-    onChange({ exemplarUrl: "", styleName: name, strength: value?.strength ?? 0.7 });
+    onChange({ styleName: name, strength: value?.strength ?? 0.7 });
   }
 
   return (

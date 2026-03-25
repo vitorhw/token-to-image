@@ -8,14 +8,11 @@ import { DetectedToken, TokenCategory, WidgetState } from "@/types/tokens";
 import { ColorPicker } from "@/components/widgets/color-picker";
 import { StyleGallery } from "@/components/widgets/style-gallery";
 import { CameraControls } from "@/components/widgets/camera-controls";
-import { MaskPainter } from "@/components/widgets/mask-painter";
 import { SpatialCanvas } from "@/components/widgets/spatial-canvas";
-import { PoseEditor } from "@/components/widgets/pose-editor";
 import { cn } from "@/lib/utils";
 
 // Extract key subjects/objects from prompt for auto-populating spatial canvas
 function extractSubjects(prompt: string): string[] {
-  // Simple heuristic: find nouns after articles/determiners
   const words = prompt.split(/\s+/);
   const subjects: string[] = [];
   const skipWords = new Set(["a", "an", "the", "is", "are", "was", "were", "in", "on", "at", "to", "and", "or", "with", "by", "for", "of", "from", "towards", "toward", "into", "through"]);
@@ -24,7 +21,6 @@ function extractSubjects(prompt: string): string[] {
   for (let i = 0; i < words.length; i++) {
     const w = words[i].toLowerCase().replace(/[,.:;!?]/g, "");
     if (["a", "an", "the"].includes(w) && i + 1 < words.length) {
-      // Collect noun phrase after article
       let phrase = "";
       for (let j = i + 1; j < Math.min(i + 4, words.length); j++) {
         const next = words[j].replace(/[,.:;!?]/g, "").toLowerCase();
@@ -44,8 +40,6 @@ const CATEGORY_COLORS: Record<TokenCategory, { bg: string; border: string; text:
   color: { bg: "bg-rose-50", border: "border-rose-300", text: "text-rose-700" },
   camera_angle: { bg: "bg-purple-50", border: "border-purple-300", text: "text-purple-700" },
   style: { bg: "bg-amber-50", border: "border-amber-300", text: "text-amber-700" },
-  pose: { bg: "bg-green-50", border: "border-green-300", text: "text-green-700" },
-  masking: { bg: "bg-red-50", border: "border-red-300", text: "text-red-700" },
 };
 
 const CATEGORY_LABELS: Record<TokenCategory, string> = {
@@ -55,8 +49,6 @@ const CATEGORY_LABELS: Record<TokenCategory, string> = {
   color: "Color",
   camera_angle: "Camera Angle",
   style: "Art Style",
-  pose: "Pose & Gesture",
-  masking: "Selective Edit",
 };
 
 interface PromptInputProps {
@@ -70,7 +62,6 @@ interface PromptInputProps {
   widgetState: WidgetState;
   onWidgetStateChange: (state: Partial<WidgetState>) => void;
   configuredWidgets: Set<TokenCategory>;
-  currentImageUrl?: string;
 }
 
 function TokenWidget({
@@ -79,14 +70,12 @@ function TokenWidget({
   onWidgetStateChange,
   configuredWidgets,
   prompt,
-  currentImageUrl,
 }: {
   token: DetectedToken;
   widgetState: WidgetState;
   onWidgetStateChange: (state: Partial<WidgetState>) => void;
   configuredWidgets: Set<TokenCategory>;
   prompt: string;
-  currentImageUrl?: string;
 }) {
   const colors = CATEGORY_COLORS[token.category];
   const isConfigured = configuredWidgets.has(token.category);
@@ -137,26 +126,11 @@ function TokenWidget({
             tokenText={token.text}
           />
         )}
-        {token.category === "masking" && currentImageUrl && (
-          <MaskPainter
-            imageUrl={currentImageUrl}
-            value={widgetState.maskRegion ?? null}
-            onChange={(mask) => onWidgetStateChange({ maskRegion: mask })}
-          />
-        )}
         {(token.category === "spatial_position" || token.category === "spatial_size" || token.category === "spatial_depth") && (
           <SpatialCanvas
             value={widgetState.spatialRegions ?? []}
             onChange={(regions) => onWidgetStateChange({ spatialRegions: regions })}
             subjects={extractSubjects(prompt)}
-          />
-        )}
-        {token.category === "pose" && (
-          <PoseEditor
-            value={widgetState.poseSelection ?? null}
-            onChange={(pose) => onWidgetStateChange({ poseSelection: pose })}
-            poseDescription={token.text}
-            fullPrompt={prompt}
           />
         )}
       </PopoverContent>
@@ -175,7 +149,6 @@ export function PromptInput({
   widgetState,
   onWidgetStateChange,
   configuredWidgets,
-  currentImageUrl,
 }: PromptInputProps) {
   const editableRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -218,14 +191,11 @@ export function PromptInput({
   const inlineTokenView = useMemo(() => {
     if (!detectedTokens.length || !prompt) return null;
 
-    // Re-compute indices by actually finding the token text in the prompt
-    // Gemini's indices can be off-by-one or wrong
     const fixedTokens = detectedTokens.map((token) => {
       const idx = prompt.indexOf(token.text);
       if (idx >= 0) {
         return { ...token, startIndex: idx, endIndex: idx + token.text.length };
       }
-      // Fallback: try case-insensitive
       const lowerIdx = prompt.toLowerCase().indexOf(token.text.toLowerCase());
       if (lowerIdx >= 0) {
         return { ...token, startIndex: lowerIdx, endIndex: lowerIdx + token.text.length };
@@ -262,7 +232,6 @@ export function PromptInput({
           onWidgetStateChange={onWidgetStateChange}
           configuredWidgets={configuredWidgets}
           prompt={prompt}
-          currentImageUrl={currentImageUrl}
         />
       );
       lastIndex = token.endIndex;
@@ -272,7 +241,7 @@ export function PromptInput({
     }
 
     return parts;
-  }, [prompt, detectedTokens, widgetState, onWidgetStateChange, configuredWidgets, currentImageUrl]);
+  }, [prompt, detectedTokens, widgetState, onWidgetStateChange, configuredWidgets]);
 
   return (
     <div className="space-y-0">

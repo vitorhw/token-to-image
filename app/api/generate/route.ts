@@ -7,7 +7,7 @@ export async function POST(req: NextRequest) {
   const startTime = Date.now();
   try {
     const body = await req.json();
-    const { prompt, widgetState = {}, previousImageUrl } = body;
+    const { prompt, widgetState = {} } = body;
 
     if (!prompt || typeof prompt !== "string") {
       return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
@@ -16,12 +16,7 @@ export async function POST(req: NextRequest) {
     console.log(`[generate] Starting: "${prompt.slice(0, 80)}..."`);
     console.log(`[generate] Widgets: ${Object.keys(widgetState).filter(k => widgetState[k] != null).join(", ") || "none"}`);
 
-    const result = await routeGeneration({
-      prompt,
-      enrichedPrompt: prompt,
-      widgetState,
-      previousImageUrl,
-    });
+    const result = await routeGeneration({ prompt, widgetState });
 
     console.log(`[generate] Done in ${Date.now() - startTime}ms via ${result.pipeline}`);
     return NextResponse.json({ ...result, enrichedPrompt: result.enrichedPrompt });
