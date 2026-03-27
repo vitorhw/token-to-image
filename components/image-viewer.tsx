@@ -57,7 +57,7 @@ export function ImageViewer({
                 <div className="p-4">
                   <h4 className="text-sm font-semibold">Generation Pipeline</h4>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {currentImage.provider === "fal" ? "fal.ai" : "Gemini"} &middot; {currentImage.pipeline}
+                    {currentImage.provider === "modal" ? "Modal" : currentImage.provider === "fal" ? "fal.ai" : "Gemini"} &middot; {currentImage.pipeline}
                   </p>
                 </div>
                 <Separator />

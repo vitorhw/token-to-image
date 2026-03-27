@@ -23,9 +23,13 @@ const SEG_COLORS = [
   "#FF0080", "#00FF80", "#0080FF", "#80FF00",
 ];
 
+/** Multi-pass box blur approximation of Gaussian (3 passes converge to Gaussian). */
 function blurCanvas(ctx: CanvasRenderingContext2D, r: number) {
-  ctx.filter = `blur(${r}px)`;
-  ctx.drawImage(ctx.canvas, 0, 0);
+  const pass = Math.ceil(r / 3);
+  for (let i = 0; i < 3; i++) {
+    ctx.filter = `blur(${pass}px)`;
+    ctx.drawImage(ctx.canvas, 0, 0);
+  }
   ctx.filter = "none";
 }
 
@@ -92,12 +96,14 @@ export function renderSpatialDepthMap(regions: SpatialRegion[]): string {
   canvas.width = SIZE; canvas.height = SIZE;
   const ctx = canvas.getContext("2d")!;
 
-  ctx.fillStyle = "rgb(0,0,0)";
+  // Background at ~20% depth (not pure black) so ControlNet has gradient contrast
+  ctx.fillStyle = "rgb(50,50,50)";
   ctx.fillRect(0, 0, SIZE, SIZE);
 
   const sorted = [...regions].sort((a, b) => a.depth - b.depth);
   for (const r of sorted) {
-    const b = Math.round(r.depth * 255);
+    // Map depth 0-1 to brightness 60-255 (above background baseline)
+    const b = Math.round(60 + r.depth * 195);
     ctx.fillStyle = `rgb(${b},${b},${b})`;
     ctx.fillRect(r.x * SIZE, r.y * SIZE, r.width * SIZE, r.height * SIZE);
   }
@@ -120,7 +126,7 @@ export function renderCombinedDepthMap(
   // Spatial regions override camera depth in their area
   const sorted = [...regions].sort((a, b) => a.depth - b.depth);
   for (const r of sorted) {
-    const brightness = Math.round(r.depth * 255);
+    const brightness = Math.round(60 + r.depth * 195);
     const x0 = Math.round(r.x * SIZE);
     const y0 = Math.round(r.y * SIZE);
     const w = Math.round(r.width * SIZE);
@@ -153,6 +159,98 @@ export function renderCombinedDepthMap(
  *
  * Convention: 0 = far (black), 255 = near (white).
  */
+/**
+ * Canny edge map: white outlines on black background.
+ * Used for ControlNet canny mode to reinforce object boundaries.
+ */
+export function renderCannyMap(regions: SpatialRegion[], lineWidth: number = 3): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = SIZE; canvas.height = SIZE;
+  const ctx = canvas.getContext("2d")!;
+
+  ctx.fillStyle = "rgb(0,0,0)";
+  ctx.fillRect(0, 0, SIZE, SIZE);
+
+  ctx.strokeStyle = "rgb(255,255,255)";
+  ctx.lineWidth = lineWidth;
+
+  const sorted = [...regions].sort((a, b) => a.depth - b.depth);
+  for (const r of sorted) {
+    ctx.strokeRect(
+      Math.round(r.x * SIZE),
+      Math.round(r.y * SIZE),
+      Math.round(r.width * SIZE),
+      Math.round(r.height * SIZE),
+    );
+  }
+
+  // Light blur to soften edges (real canny has anti-aliased edges)
+  ctx.filter = "blur(2px)";
+  ctx.drawImage(canvas, 0, 0);
+  ctx.filter = "none";
+
+  return canvas.toDataURL("image/png");
+}
+
+/**
+ * Binary mask for a single region (white=region, black=background).
+ * Feathered edges prevent hard seam artifacts in regional prompting.
+ */
+export function renderRegionMask(region: SpatialRegion, feather: number = 4): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = SIZE; canvas.height = SIZE;
+  const ctx = canvas.getContext("2d")!;
+
+  ctx.fillStyle = "rgb(0,0,0)";
+  ctx.fillRect(0, 0, SIZE, SIZE);
+
+  ctx.fillStyle = "rgb(255,255,255)";
+  ctx.fillRect(
+    Math.round(region.x * SIZE),
+    Math.round(region.y * SIZE),
+    Math.round(region.width * SIZE),
+    Math.round(region.height * SIZE),
+  );
+
+  if (feather > 0) {
+    ctx.filter = `blur(${feather}px)`;
+    ctx.drawImage(canvas, 0, 0);
+    ctx.filter = "none";
+  }
+
+  return canvas.toDataURL("image/png");
+}
+
+/**
+ * Background mask: inverse of all regions (white=background, black=regions).
+ */
+export function renderBackgroundMask(regions: SpatialRegion[], feather: number = 4): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = SIZE; canvas.height = SIZE;
+  const ctx = canvas.getContext("2d")!;
+
+  ctx.fillStyle = "rgb(255,255,255)";
+  ctx.fillRect(0, 0, SIZE, SIZE);
+
+  ctx.fillStyle = "rgb(0,0,0)";
+  for (const r of regions) {
+    ctx.fillRect(
+      Math.round(r.x * SIZE),
+      Math.round(r.y * SIZE),
+      Math.round(r.width * SIZE),
+      Math.round(r.height * SIZE),
+    );
+  }
+
+  if (feather > 0) {
+    ctx.filter = `blur(${feather}px)`;
+    ctx.drawImage(canvas, 0, 0);
+    ctx.filter = "none";
+  }
+
+  return canvas.toDataURL("image/png");
+}
+
 /** Client-side: always writes to RGBA ImageData. */
 function computePerspectiveDepth(
   settings: CameraSettings,

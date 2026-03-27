@@ -13,21 +13,55 @@ import { cn } from "@/lib/utils";
 
 // Extract key subjects/objects from prompt for auto-populating spatial canvas
 function extractSubjects(prompt: string): string[] {
-  const words = prompt.split(/\s+/);
+  // Split on commas first to respect clause boundaries
+  const clauses = prompt.split(/[,;]/);
   const subjects: string[] = [];
-  const skipWords = new Set(["a", "an", "the", "is", "are", "was", "were", "in", "on", "at", "to", "and", "or", "with", "by", "for", "of", "from", "towards", "toward", "into", "through"]);
-  const actionWords = new Set(["walking", "running", "sitting", "standing", "looking", "wearing", "holding", "walking", "flying", "swimming"]);
 
-  for (let i = 0; i < words.length; i++) {
-    const w = words[i].toLowerCase().replace(/[,.:;!?]/g, "");
-    if (["a", "an", "the"].includes(w) && i + 1 < words.length) {
+  const stopWords = new Set([
+    "a", "an", "the", "is", "are", "was", "were", "in", "on", "at", "to",
+    "and", "or", "with", "by", "for", "of", "from", "towards", "toward",
+    "into", "through", "during", "between", "above", "below", "under",
+  ]);
+  const actionWords = new Set([
+    "walking", "running", "sitting", "standing", "looking", "wearing",
+    "holding", "flying", "swimming", "parked", "placed", "resting",
+  ]);
+  // Spatial/positional words that aren't real objects
+  const spatialWords = new Set([
+    "left", "right", "center", "middle", "top", "bottom", "side",
+    "foreground", "background", "front", "back", "corner", "edge",
+    "distance", "horizon", "far", "near", "close",
+  ]);
+  // Style/lighting/camera terms that aren't objects
+  const metaWords = new Set([
+    "style", "lighting", "light", "hour", "view", "shot", "angle",
+    "perspective", "level", "mode", "quality", "resolution", "render",
+    "tone", "mood", "atmosphere", "cinematic", "dramatic", "golden",
+    "natural", "ambient", "soft", "harsh", "warm", "cool",
+  ]);
+
+  for (const clause of clauses) {
+    const words = clause.trim().split(/\s+/);
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i].toLowerCase().replace(/[.:;!?]/g, "");
+      if (!["a", "an", "the"].includes(w) || i + 1 >= words.length) continue;
+
       let phrase = "";
       for (let j = i + 1; j < Math.min(i + 4, words.length); j++) {
         const next = words[j].replace(/[,.:;!?]/g, "").toLowerCase();
-        if (skipWords.has(next) || actionWords.has(next)) break;
+        if (stopWords.has(next) || actionWords.has(next)) break;
         phrase += (phrase ? " " : "") + words[j].replace(/[,.:;!?]/g, "");
       }
-      if (phrase && phrase.length > 2) subjects.push(phrase);
+      if (!phrase || phrase.length <= 2) continue;
+
+      // Skip if the phrase is purely spatial/meta terms
+      const phraseWords = phrase.toLowerCase().split(/\s+/);
+      const isAllSpatialOrMeta = phraseWords.every(
+        (pw) => spatialWords.has(pw) || metaWords.has(pw)
+      );
+      if (isAllSpatialOrMeta) continue;
+
+      subjects.push(phrase);
     }
   }
   return [...new Set(subjects)].slice(0, 4);

@@ -137,8 +137,8 @@ export default function Home() {
     dispatch({ type: "SET_GENERATING", isGenerating: true });
     dispatch({ type: "SET_GENERATION_STATUS", status: "Rendering conditioning images..." });
 
-    // Render conditioning images from widget state (client-side)
-    const conditioning = await import("@/lib/conditioning");
+    const condLib = await import("@/lib/conditioning");
+    const { buildRegionPromptText } = await import("@/lib/prompt-utils");
     const widgetStateWithImages = { ...state.widgetState };
     const ws = state.widgetState;
 
@@ -146,30 +146,92 @@ export default function Home() {
     const hasCamera = !!(ws.cameraSettings && (
       ws.cameraSettings.elevation !== 0 || ws.cameraSettings.azimuth !== 0 || ws.cameraSettings.focalLength !== 50
     ));
+    const hasStyle = !!ws.styleSelection?.styleName;
+    const hasColors = !!ws.colorSelections?.length;
 
-    // Render depth map based on what widgets are active
+    // ── Render all conditioning images ──
+
+    // 1. Depth map (same logic as before)
     if (useTestDepthMap) {
-      widgetStateWithImages.depthMapDataUrl = conditioning.renderTestDepthMap();
-      console.log("[client] Using TEST depth map");
+      widgetStateWithImages.depthMapDataUrl = condLib.renderTestDepthMap();
     } else if (hasSpatial && hasCamera) {
-      widgetStateWithImages.depthMapDataUrl = conditioning.renderCombinedDepthMap(
-        ws.cameraSettings!, ws.spatialRegions!,
-      );
-      console.log("[client] Rendered COMBINED depth map (camera + spatial)");
+      widgetStateWithImages.depthMapDataUrl = condLib.renderCombinedDepthMap(ws.cameraSettings!, ws.spatialRegions!);
     } else if (hasCamera) {
-      widgetStateWithImages.depthMapDataUrl = conditioning.renderCameraDepthMap(ws.cameraSettings!);
-      console.log("[client] Rendered CAMERA perspective depth map");
+      widgetStateWithImages.depthMapDataUrl = condLib.renderCameraDepthMap(ws.cameraSettings!);
     } else if (hasSpatial) {
-      widgetStateWithImages.depthMapDataUrl = conditioning.renderSpatialDepthMap(ws.spatialRegions!);
-      console.log("[client] Rendered SPATIAL depth map");
+      widgetStateWithImages.depthMapDataUrl = condLib.renderSpatialDepthMap(ws.spatialRegions!);
     }
 
-    // Capture conditioning images for debug UI
+    // 2. Canny edge map (if spatial regions exist)
+    if (hasSpatial) {
+      widgetStateWithImages.cannyMapDataUrl = condLib.renderCannyMap(ws.spatialRegions!);
+    }
+
+    // 3. Region masks + per-region prompts (for Regional Prompting)
+    if (hasSpatial) {
+      const regionMasks = ws.spatialRegions!.map(region => ({
+        regionId: region.id,
+        maskDataUrl: condLib.renderRegionMask(region),
+        prompt: buildRegionPromptText(region, ws.colorSelections),
+      }));
+      // Add background mask
+      regionMasks.push({
+        regionId: "background",
+        maskDataUrl: condLib.renderBackgroundMask(ws.spatialRegions!),
+        prompt: state.prompt, // background gets full scene prompt
+      });
+      widgetStateWithImages.regionMasks = regionMasks;
+    }
+
+    // 4. Style reference image (async fetch, in parallel)
+    let styleRefDataUrl: string | null = null;
+    if (hasStyle) {
+      try {
+        const { loadStyleReference } = await import("@/lib/style-references");
+        styleRefDataUrl = await loadStyleReference(ws.styleSelection!.styleName);
+        if (styleRefDataUrl) {
+          widgetStateWithImages.styleReferenceDataUrl = styleRefDataUrl;
+        }
+      } catch {
+        console.log("[client] Style reference not available");
+      }
+    }
+
+    // ── Build conditioning payload for Modal backend ──
+    const conditioningPayload: Record<string, any> = {};
+    const hasAnyConditioning = widgetStateWithImages.depthMapDataUrl || hasSpatial || hasStyle;
+
+    if (widgetStateWithImages.depthMapDataUrl) {
+      conditioningPayload.depth_map = widgetStateWithImages.depthMapDataUrl;
+    }
+    if (widgetStateWithImages.cannyMapDataUrl) {
+      conditioningPayload.canny_map = widgetStateWithImages.cannyMapDataUrl;
+    }
+    if (widgetStateWithImages.regionMasks?.length) {
+      conditioningPayload.regions = widgetStateWithImages.regionMasks.map(rm => ({
+        mask: rm.maskDataUrl,
+        prompt: rm.prompt,
+      }));
+      conditioningPayload.base_ratio = 0.2;
+    }
+    if (styleRefDataUrl) {
+      conditioningPayload.style_reference = styleRefDataUrl;
+      conditioningPayload.style_strength = ws.styleSelection?.strength ?? 0.6;
+    }
+    conditioningPayload.controlnet_scales = { depth: 0.8, canny: 0.4 };
+
+    // ── Debug UI ──
     const debugImages: { type: string; dataUrl: string; scale: number }[] = [];
     if (widgetStateWithImages.depthMapDataUrl) {
       const label = hasSpatial && hasCamera ? "combined (camera+spatial)"
         : hasCamera ? "camera perspective" : "spatial depth";
-      debugImages.push({ type: `depth: ${label}`, dataUrl: widgetStateWithImages.depthMapDataUrl, scale: 0.8 });
+      debugImages.push({ type: `depth: ${label}`, dataUrl: widgetStateWithImages.depthMapDataUrl, scale: 0.45 });
+    }
+    if (widgetStateWithImages.cannyMapDataUrl) {
+      debugImages.push({ type: "canny edges", dataUrl: widgetStateWithImages.cannyMapDataUrl, scale: 0.3 });
+    }
+    if (styleRefDataUrl) {
+      debugImages.push({ type: "style reference", dataUrl: styleRefDataUrl, scale: ws.styleSelection?.strength ?? 0.6 });
     }
     setDebugConditioningImages(debugImages);
 
@@ -190,6 +252,13 @@ export default function Home() {
         body: JSON.stringify({
           prompt: state.prompt,
           widgetState: widgetStateWithImages,
+          // New: structured conditioning for Modal backend
+          ...(hasAnyConditioning ? {
+            conditioning: conditioningPayload,
+            enable_controlnet: hasSpatial || hasCamera,
+            enable_regional: hasSpatial,
+            enable_ip_adapter: hasStyle && !!styleRefDataUrl,
+          } : {}),
         }),
       });
       const data = await res.json();
@@ -236,9 +305,8 @@ export default function Home() {
               <div className="space-y-4 pr-4">
                 {TAXONOMY.map((entry) => (
                   <div key={entry.category} className="rounded-lg border">
-                    <div className="flex items-baseline justify-between px-4 pt-3 pb-1">
+                    <div className="px-4 pt-3 pb-1">
                       <h4 className="text-sm font-semibold">{entry.label}</h4>
-                      <span className="text-[11px] text-muted-foreground">{entry.subcategory}</span>
                     </div>
 
                     <p className="px-4 text-xs text-muted-foreground">{entry.underspecification}</p>
@@ -254,14 +322,7 @@ export default function Home() {
                       </div>
                     </div>
 
-                    <div className="px-4 py-3 flex flex-wrap gap-1">
-                      {entry.patterns.slice(0, 12).map((p) => (
-                        <span key={p} className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{p}</span>
-                      ))}
-                      {entry.patterns.length > 12 && (
-                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">+{entry.patterns.length - 12} more</span>
-                      )}
-                    </div>
+                    <div className="pb-3" />
                   </div>
                 ))}
               </div>

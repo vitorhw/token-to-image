@@ -2,13 +2,14 @@
 
 ## Stack
 
-Next.js 16 (App Router) · React 19 · TypeScript · Shadcn/ui (base-nova, blue theme) · Tailwind v4 · Gemini 2.5 Flash · fal.ai Flux General
+Next.js 16 (App Router) · React 19 · TypeScript · Shadcn/ui (default, neutral theme) · Tailwind v4 · Gemini 2.5 Flash · fal.ai Flux General · Modal.com GPU Backend (FLUX.1-dev)
 
 ## Environment
 
 ```
 GEMINI_API_KEY=   # Token detection, image gen (fallback), test judging
-FAL_KEY=          # Flux General, ControlNet Union Pro
+FAL_KEY=          # Flux General, ControlNet Union Pro (fallback)
+MODAL_API_URL=    # Custom GPU backend (Modal.com) — multi-signal conditioning
 ```
 
 ## Commands
@@ -20,71 +21,79 @@ npm run build    # Production build
 
 ## Architecture
 
-**Pipeline flow**: `prompt → Gemini token detection → widget popovers → client-side conditioning rendering → pipeline router → fal.ai / Gemini → result`
+### Pipeline overview
 
-### 4 Supported Widgets
+```
+prompt → Gemini token detection → widget popovers →
+  client-side conditioning rendering (depth, canny, masks, style ref) →
+  pipeline router →
+    1. Modal backend (ControlNet + Regional Prompting + IP-Adapter)  [primary]
+    2. fal.ai ControlNet (depth only)                                 [fallback]
+    3. Gemini Flash / Flux General (text-only)                        [fallback]
+  → result
+```
 
-| Widget           | Conditioning Signal                    | Pipeline Target                          |
-| ---------------- | -------------------------------------- | ---------------------------------------- |
-| Spatial Position | Depth map (region brightness = depth)  | ControlNet depth mode (scale 0.8)        |
-| Camera Angle     | Perspective depth map + concise text   | ControlNet depth mode + prompt prefix    |
-| Color            | Concise text enrichment                | Prompt (descriptive names, no hex codes) |
-| Art Style        | Concise text enrichment                | Prompt prefix (style name)               |
+### 4 Supported Widgets — Multi-Signal Conditioning
 
-### Conditioning details
+| Widget           | Signal 1 (Latent)                  | Signal 2 (Latent)        | Signal 3 (Attention)                                   | Signal 4 (Text)          |
+| ---------------- | ---------------------------------- | ------------------------ | ------------------------------------------------------ | ------------------------ |
+| Spatial Position | Depth map → ControlNet depth       | Canny edges → ControlNet | Binary masks + per-region prompts → Regional Prompting | Position hints in prompt |
+| Camera Angle     | Perspective depth map → ControlNet | —                        | —                                                      | Camera text prefix       |
+| Color            | —                                  | —                        | Color names bound per-region → Regional Prompting      | Color names in prompt    |
+| Art Style        | —                                  | —                        | IP-Adapter reference image                             | Style text prefix        |
 
-**Spatial Position**: Each region rendered as a grayscale rectangle (brightness = depth). Sent via ControlNet depth. Position/size are in the rectangle geometry; depth value encodes foreground/background.
+### Modal backend (primary pipeline)
 
-**Camera Angle**: Perspective-projected depth map using proper camera optics (ray-ground plane intersection with hyperbolic 1/distance falloff). Matches Depth Anything V2 output format that ControlNet was trained on.
+Custom FLUX.1-dev pipeline on Modal.com (A100-40GB) combining:
 
-When Spatial + Camera are both active, depth maps merge (camera perspective base + spatial regions overlaid).
+- **ControlNet Union Pro 2.0** (Shakker-Labs): depth (scale 0.45) + canny (scale 0.3)
+- **Regional Prompting** (InstantX): per-region attention masks + focused prompts
+- **IP-Adapter** (InstantX, Phase 2): style reference images
 
-**IMPORTANT constraints:**
-- CLIP has a 77-token limit. Enriched prompts must be concise (~60 words max).
-- `easycontrols` is incompatible with `controlnet_unions` (tensor dimension mismatch in fal.ai). Do not combine them.
-- Color hex codes get fragmented by tokenizers — use descriptive names only (NumColor, arXiv:2603.13547).
+FLUX uses **T5-XXL (512 tokens)**, NOT CLIP (77 tokens). Regional prompts can be rich.
+
+Ablation flags: `enable_controlnet`, `enable_regional`, `enable_ip_adapter` — for the paper.
+
+### Conditioning rendering
+
+Client-side renders all conditioning images (1024x1024 PNG):
+
+- **Depth map**: camera perspective + spatial regions, multi-pass Gaussian blur
+- **Canny map**: white edge outlines on black, 3px lines
+- **Region masks**: binary mask per region + background, feathered edges
+- **Style reference**: curated images in `public/styles/` (512x512 JPEG)
 
 ### Key files
 
-| File                          | Role                                                          |
-| ----------------------------- | ------------------------------------------------------------- |
-| `lib/pipeline-router.ts`      | Routing, concise prompt enrichment (respects 77-token limit)  |
-| `lib/fal.ts`                  | Uploads depth maps to fal storage, calls Flux + ControlNet    |
-| `lib/conditioning.ts`         | Client-side: perspective depth maps, spatial depth maps       |
-| `lib/conditioning-server.ts`  | Server-side mirror (for tests, no DOM)                        |
-| `lib/gemini.ts`               | Token detection, image generation, test image judging         |
-| `lib/test-cases.ts`           | 27 test cases covering all widgets individually and combined  |
-
-### fal.ai API schema
-
-```json
-{
-  "controlnet_unions": [{
-    "path": "Shakker-Labs/FLUX.1-dev-ControlNet-Union-Pro-2.0",
-    "controls": [{
-      "control_image_url": "<fal storage URL>",
-      "control_mode": "depth",
-      "conditioning_scale": 0.8,
-      "end_percentage": 0.8
-    }]
-  }]
-}
-```
+| File                            | Role                                                              |
+| ------------------------------- | ----------------------------------------------------------------- |
+| `modal_backend/app.py`          | Modal.com GPU backend (FLUX + ControlNet + Regional + IP-Adapter) |
+| `modal_backend/pipeline.py`     | Pipeline wrapper with ablation flags                              |
+| `modal_backend/conditioning.py` | Server-side depth/canny/mask rendering (Python/Pillow)            |
+| `modal_backend/schemas.py`      | Pydantic request/response models                                  |
+| `lib/pipeline-router.ts`        | Routes to Modal → fal.ai → Gemini, builds per-region prompts      |
+| `lib/modal.ts`                  | Modal API client with health check                                |
+| `lib/fal.ts`                    | fal.ai fallback (depth-only ControlNet)                           |
+| `lib/conditioning.ts`           | Client-side: depth, canny, region masks, segmentation             |
+| `lib/conditioning-server.ts`    | Server-side mirror (for tests, no DOM)                            |
+| `lib/style-references.ts`       | Style name → reference image path mapping                         |
+| `lib/gemini.ts`                 | Token detection, image generation fallback, test judging          |
+| `lib/test-cases.ts`             | 27 test cases covering all widgets individually and combined      |
 
 ### Pipeline routing
 
-1. If spatial regions OR camera settings exist → depth map rendered → ControlNet path
-2. Otherwise → text-only path (Gemini Flash, fallback to Flux General)
-3. Color and Style enrich text prompt only
+1. If conditioning signals + Modal healthy → **Modal backend** (multi-signal)
+2. If Modal fails, depth map present → **fal.ai ControlNet** (depth only, degraded)
+3. If no conditioning → **Gemini Flash** (text-only, fallback to Flux General)
 
 ### Gotchas
 
-- CLIP 77-token limit: enriched prompts MUST be concise. Long prompts get truncated, losing end content.
-- `easycontrols` + `controlnet_unions` = crash. Never combine them on the same request.
-- `fal.storage.upload(File)` required — data URLs rejected as `control_image_url`
-- `path` must be HuggingFace model ID (`Shakker-Labs/...`), not preset strings
-- `control_mode` not `controlnet_mode` — Union model field name
+- fal.ai CLIP 77-token limit applies only to the fal.ai fallback path
+- Modal/FLUX uses T5-XXL: 512 tokens available for rich per-region prompts
+- `easycontrols` + `controlnet_unions` = crash on fal.ai. Never combine them.
 - Depth convention: 0=far (black), 255=near (white) — inverse depth matching Depth Anything V2
 - Color hex codes get fragmented by tokenizers — use descriptive names only
 - Gemini image gen model: `gemini-2.5-flash-preview-image-generation` (frequently changes)
 - `Math.random()` in SSR causes hydration mismatch — use `useState` initializer
+- Regional Prompting masks must be feathered (4-8px blur) to prevent seam artifacts
+- ControlNet Union Pro 2.0 mode indices: canny=0, depth=2
