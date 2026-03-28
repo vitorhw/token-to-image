@@ -40,7 +40,14 @@ export function renderDepthMap(regions: SpatialRegion[]): string {
   for (const r of sorted) {
     const b = Math.round(r.depth * 255);
     ctx.fillStyle = `rgb(${b},${b},${b})`;
-    ctx.fillRect(r.x * SIZE, r.y * SIZE, r.width * SIZE, r.height * SIZE);
+    const cx = (r.x + r.width / 2) * SIZE;
+    const cy = (r.y + r.height / 2) * SIZE;
+    const rot = ((r.rotation ?? 0) * Math.PI) / 180;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rot);
+    ctx.fillRect(-r.width * SIZE / 2, -r.height * SIZE / 2, r.width * SIZE, r.height * SIZE);
+    ctx.restore();
   }
   blurCanvas(ctx, 18);
   return canvas.toDataURL("image/png");

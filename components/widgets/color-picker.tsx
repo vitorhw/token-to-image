@@ -2,13 +2,11 @@
 
 import { useState, useMemo } from "react";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { ColorSelection } from "@/types/tokens";
 import { cn } from "@/lib/utils";
 
-// Context-aware: map detected color tokens to relevant preset palettes
 const ALL_PRESETS: Record<string, { hex: string; name: string }[]> = {
   red: [
     { hex: "#DC143C", name: "Crimson" }, { hex: "#FF2400", name: "Scarlet" },
@@ -47,7 +45,6 @@ const ALL_PRESETS: Record<string, { hex: string; name: string }[]> = {
     { hex: "#8B4513", name: "Saddle Brown" }, { hex: "#D2B48C", name: "Tan" },
     { hex: "#A0522D", name: "Sienna" }, { hex: "#DEB887", name: "Burlywood" },
     { hex: "#808000", name: "Olive" }, { hex: "#556B2F", name: "Dark Olive" },
-    { hex: "#BC8F8F", name: "Rosy Brown" }, { hex: "#F5DEB3", name: "Wheat" },
   ],
   neutral: [
     { hex: "#FFFFF0", name: "Ivory" }, { hex: "#FFFDD0", name: "Cream" },
@@ -58,72 +55,39 @@ const ALL_PRESETS: Record<string, { hex: string; name: string }[]> = {
 
 function getRelevantPresets(tokenText: string): { group: string; colors: { hex: string; name: string }[] }[] {
   const text = tokenText.toLowerCase();
-
-  // Direct color match
   for (const [key, colors] of Object.entries(ALL_PRESETS)) {
     if (text.includes(key)) {
-      return [{ group: `${key.charAt(0).toUpperCase() + key.slice(1)} variants`, colors }];
+      return [{ group: `${key.charAt(0).toUpperCase() + key.slice(1)} Variants`, colors }];
     }
   }
-
-  // Mood-based matches
   if (text.includes("warm") || text.includes("golden")) {
-    return [
-      { group: "Warm tones", colors: [...ALL_PRESETS.red.slice(0, 3), ...ALL_PRESETS.yellow.slice(0, 3), ...ALL_PRESETS.earthy.slice(0, 2)] },
-    ];
+    return [{ group: "Warm Tones", colors: [...ALL_PRESETS.red.slice(0, 3), ...ALL_PRESETS.yellow.slice(0, 3), ...ALL_PRESETS.earthy.slice(0, 2)] }];
   }
   if (text.includes("cool") || text.includes("cold")) {
-    return [
-      { group: "Cool tones", colors: [...ALL_PRESETS.blue.slice(0, 4), ...ALL_PRESETS.purple.slice(0, 2), ...ALL_PRESETS.green.slice(0, 2)] },
-    ];
+    return [{ group: "Cool Tones", colors: [...ALL_PRESETS.blue.slice(0, 4), ...ALL_PRESETS.purple.slice(0, 2), ...ALL_PRESETS.green.slice(0, 2)] }];
   }
-  if (text.includes("earthy") || text.includes("natural") || text.includes("muted")) {
-    return [{ group: "Earthy tones", colors: ALL_PRESETS.earthy }];
-  }
-  if (text.includes("pastel") || text.includes("soft") || text.includes("pale")) {
-    return [{
-      group: "Pastel tones",
-      colors: [
-        { hex: "#FFB6C1", name: "Light Pink" }, { hex: "#ADD8E6", name: "Light Blue" },
-        { hex: "#98FB98", name: "Pale Green" }, { hex: "#FFFACD", name: "Lemon Chiffon" },
-        { hex: "#E6E6FA", name: "Lavender" }, { hex: "#FFDAB9", name: "Peach Puff" },
-      ],
-    }];
-  }
-  if (text.includes("neon") || text.includes("vivid") || text.includes("bright")) {
-    return [{
-      group: "Vivid / Neon",
-      colors: [
-        { hex: "#FF0000", name: "Red" }, { hex: "#00FF00", name: "Lime" },
-        { hex: "#0000FF", name: "Blue" }, { hex: "#FF00FF", name: "Magenta" },
-        { hex: "#FFFF00", name: "Yellow" }, { hex: "#00FFFF", name: "Cyan" },
-      ],
-    }];
-  }
-
-  // Default: show common palettes
-  return [
-    { group: "Common colors", colors: [
+  return [{
+    group: "Common Colors",
+    colors: [
       { hex: "#DC143C", name: "Crimson" }, { hex: "#4169E1", name: "Royal Blue" },
       { hex: "#228B22", name: "Forest Green" }, { hex: "#FFD700", name: "Gold" },
       { hex: "#800080", name: "Purple" }, { hex: "#FF69B4", name: "Hot Pink" },
       { hex: "#8B4513", name: "Brown" }, { hex: "#C0C0C0", name: "Silver" },
-    ]},
-  ];
+    ],
+  }];
 }
 
 interface ColorPickerProps {
   targets: string[];
   value: ColorSelection[];
   onChange: (colors: ColorSelection[]) => void;
+  onDone?: () => void;
 }
 
-export function ColorPicker({ targets, value, onChange }: ColorPickerProps) {
+export function ColorPicker({ targets, value, onChange, onDone }: ColorPickerProps) {
   const [customHex, setCustomHex] = useState("#FF0000");
   const activeTarget = targets[0] ?? "main subject";
   const currentColor = value.find((c) => c.target === activeTarget);
-
-  // Context-aware presets based on the token text
   const presets = useMemo(() => getRelevantPresets(activeTarget), [activeTarget]);
 
   function selectColor(hex: string, name: string) {
@@ -136,39 +100,20 @@ export function ColorPicker({ targets, value, onChange }: ColorPickerProps) {
     <div className="space-y-3">
       {/* Current selection */}
       {currentColor && (
-        <div className="flex items-center gap-2 rounded-md border p-2">
-          <div className="h-6 w-6 rounded border" style={{ backgroundColor: currentColor.hex }} />
-          <span className="text-sm font-medium">{currentColor.name}</span>
-          <span className="text-xs text-muted-foreground">{currentColor.hex}</span>
+        <div className="flex items-center gap-2 rounded-lg border bg-muted/20 p-2.5">
+          <div className="h-8 w-8 shrink-0 rounded-md border" style={{ backgroundColor: currentColor.hex }} />
+          <div>
+            <p className="text-sm font-medium">{currentColor.name}</p>
+            <p className="text-[10px] text-muted-foreground font-mono">{currentColor.hex}</p>
+          </div>
         </div>
       )}
 
-      {/* Custom */}
-      <div className="flex items-end gap-2">
-        <div className="flex flex-1 gap-2">
-          <input
-            type="color"
-            value={customHex}
-            onChange={(e) => setCustomHex(e.target.value)}
-            className="h-9 w-10 cursor-pointer rounded border p-0.5"
-          />
-          <Input
-            value={customHex}
-            onChange={(e) => setCustomHex(e.target.value)}
-            placeholder="#FF0000"
-            className="h-9 font-mono text-xs"
-          />
-        </div>
-        <Button size="sm" variant="outline" className="h-9" onClick={() => selectColor(customHex, customHex)}>
-          <Plus className="mr-1 h-3 w-3" /> Apply
-        </Button>
-      </div>
-
-      {/* Context-aware presets */}
+      {/* Presets */}
       {presets.map(({ group, colors }) => (
-        <div key={group}>
-          <Label className="text-xs text-muted-foreground">{group}</Label>
-          <div className="mt-1 flex flex-wrap gap-1.5">
+        <div key={group} className="space-y-1.5">
+          <p className="text-[10px] font-medium text-muted-foreground">{group}</p>
+          <div className="flex flex-wrap gap-1.5">
             {colors.map((c) => (
               <button
                 key={c.hex}
@@ -184,6 +129,29 @@ export function ColorPicker({ targets, value, onChange }: ColorPickerProps) {
           </div>
         </div>
       ))}
+
+      {/* Custom color */}
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          value={customHex}
+          onChange={(e) => setCustomHex(e.target.value)}
+          className="h-9 w-10 cursor-pointer rounded border p-0.5"
+        />
+        <Input
+          value={customHex}
+          onChange={(e) => setCustomHex(e.target.value)}
+          placeholder="#FF0000"
+          className="h-9 font-mono text-xs flex-1"
+        />
+        <Button size="sm" variant="outline" className="h-9 shrink-0" onClick={() => selectColor(customHex, customHex)}>
+          <Plus className="mr-1 h-3 w-3" /> Apply
+        </Button>
+      </div>
+
+      <Button className="w-full h-10" onClick={onDone} disabled={!currentColor}>
+        Done
+      </Button>
     </div>
   );
 }

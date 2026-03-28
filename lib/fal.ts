@@ -72,11 +72,16 @@ export async function generateWithControls(options: {
   const controls: any[] = [];
   const conditioningImages: ConditioningImage[] = [];
 
+  const hasBothDepthAndPose = !!(widgetState.depthMapDataUrl && widgetState.poseImageDataUrl);
+
   if (widgetState.depthMapDataUrl) {
     const url = await uploadDataUrl(widgetState.depthMapDataUrl);
-    controls.push({ control_image_url: url, control_mode: "depth", conditioning_scale: 0.45, end_percentage: 0.4 });
+    // Lower depth scale when pose is also present so they balance
+    const depthScale = hasBothDepthAndPose ? 0.65 : 0.95;
+    const depthEnd = hasBothDepthAndPose ? 0.6 : 0.85;
+    controls.push({ control_image_url: url, control_mode: "depth", conditioning_scale: depthScale, end_percentage: depthEnd });
     conditioningImages.push({ label: "Depth / Camera Map", url, type: "depth" });
-    console.log("[fal] ControlNet DEPTH (scale: 0.8, end: 0.8)");
+    console.log(`[fal] ControlNet DEPTH (scale: ${depthScale}, end: ${depthEnd})`);
   }
 
   if (widgetState.poseImageDataUrl) {
@@ -90,9 +95,14 @@ export async function generateWithControls(options: {
     input.controlnet_unions = [{ path: "Shakker-Labs/FLUX.1-dev-ControlNet-Union-Pro-2.0", controls }];
   }
 
-  if (widgetState.styleSelection?.exemplarUrl) {
-    input.ip_adapters = [{ path: widgetState.styleSelection.exemplarUrl, ip_adapter_scale: widgetState.styleSelection.strength }];
-    conditioningImages.push({ label: "Style Reference (IP-Adapter)", url: widgetState.styleSelection.exemplarUrl, type: "style" });
+  if (widgetState.styleSelection?.exemplarUrls?.length) {
+    input.ip_adapters = widgetState.styleSelection.exemplarUrls.map((url) => ({
+      path: url,
+      ip_adapter_scale: widgetState.styleSelection!.strength,
+    }));
+    for (const url of widgetState.styleSelection.exemplarUrls) {
+      conditioningImages.push({ label: "Style Reference (IP-Adapter)", url, type: "style" });
+    }
   }
 
   console.log("[fal] generateWithControls:", { controls: controls.length });

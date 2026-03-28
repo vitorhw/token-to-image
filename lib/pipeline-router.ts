@@ -1,4 +1,4 @@
-import { WidgetState, GenerationResult, SpatialRegion } from "@/types/tokens";
+import { WidgetState, GenerationResult } from "@/types/tokens";
 import { generateWithGemini } from "./gemini";
 import { generateWithFlux, generateWithControls, inpaintWithFlux } from "./fal";
 
@@ -31,29 +31,12 @@ function buildEnrichedPrompt(prompt: string, ws: WidgetState): string {
 
   // Style FIRST (most impactful on overall result)
   if (ws.styleSelection?.styleName) {
-    parts.push(`${ws.styleSelection.styleName} style.`);
-  }
-
-  // Camera angle — be very explicit, models need strong camera direction
-  if (ws.cameraSettings) {
-    const cam = ws.cameraSettings;
-    let elev: string;
-    if (cam.elevation > 70) elev = "bird's eye view, camera directly above looking straight down, top-down aerial shot";
-    else if (cam.elevation > 30) elev = "high angle, camera looking down from above";
-    else if (cam.elevation < -50) elev = "extreme low angle, worm's eye view, camera on the ground looking up";
-    else if (cam.elevation < -20) elev = "low angle, camera below eye level looking up";
-    else elev = "eye level";
-
-    const lens = cam.focalLength < 24 ? ", ultra wide angle lens" :
-      cam.focalLength < 35 ? ", wide angle lens" :
-      cam.focalLength > 100 ? ", telephoto lens with compressed perspective" :
-      cam.focalLength > 70 ? ", portrait lens with shallow depth of field" : "";
-
-    const facing = cam.azimuth > 45 && cam.azimuth <= 135 ? ", shot from the right side" :
-      cam.azimuth > 135 && cam.azimuth <= 225 ? ", shot from behind" :
-      cam.azimuth > 225 && cam.azimuth <= 315 ? ", shot from the left side" : "";
-
-    parts.push(`${elev}${lens}${facing}.`);
+    const refs = ws.styleSelection.selectedReferences;
+    if (refs?.length) {
+      parts.push(`${ws.styleSelection.styleName} style, evoking ${refs.join(", ")}.`);
+    } else {
+      parts.push(`${ws.styleSelection.styleName} style.`);
+    }
   }
 
   // Spatial layout
@@ -89,10 +72,6 @@ function buildInfoSummary(enrichedPrompt: string, ws: WidgetState, condImages: a
     condImages.forEach(ci => lines.push(`  [${ci.type.toUpperCase()}] ${ci.label}`));
   }
 
-  if (ws.cameraSettings) {
-    const c = ws.cameraSettings;
-    lines.push(`\nCamera: elevation ${c.elevation}°, rotation ${c.azimuth}°, ${c.focalLength}mm`);
-  }
   if (ws.spatialRegions?.length) {
     lines.push(`Spatial: ${ws.spatialRegions.map(r => `"${r.label}" at x=${Math.round(r.x*100)}% depth=${Math.round(r.depth*100)}%`).join(", ")}`);
   }
@@ -110,7 +89,7 @@ function buildInfoSummary(enrichedPrompt: string, ws: WidgetState, condImages: a
 }
 
 function hasConditioningImages(ws: WidgetState): boolean {
-  return !!(ws.depthMapDataUrl || ws.poseImageDataUrl || ws.styleSelection?.exemplarUrl);
+  return !!(ws.depthMapDataUrl || ws.poseImageDataUrl || ws.styleSelection?.exemplarUrls?.length);
 }
 
 export async function routeGeneration(input: PipelineInput): Promise<GenerationResult> {

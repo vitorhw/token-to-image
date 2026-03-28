@@ -2,8 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Loader2, Wand2, Pencil, RotateCcw } from "lucide-react";
+import { Loader2, Wand2 } from "lucide-react";
 import { PoseSelection, PoseKeypoint } from "@/types/tokens";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +11,7 @@ interface PoseEditorProps {
   onChange: (pose: PoseSelection) => void;
   poseDescription?: string;
   fullPrompt?: string;
+  onDone?: () => void;
 }
 
 interface PoseVariation {
@@ -72,64 +72,10 @@ function StickFigure({
   );
 }
 
-function SketchCanvas({ onStrokesChange }: { onStrokesChange: (dataUrl: string) => void }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [hasStrokes, setHasStrokes] = useState(false);
-
-  const draw = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const rect = canvas.getBoundingClientRect();
-    ctx.lineTo((e.clientX - rect.left) * (canvas.width / rect.width), (e.clientY - rect.top) * (canvas.height / rect.height));
-    ctx.strokeStyle = "#3b82f6"; ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.stroke();
-  }, [isDrawing]);
-
-  const startDrawing = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const rect = canvas.getBoundingClientRect();
-    ctx.beginPath();
-    ctx.moveTo((e.clientX - rect.left) * (canvas.width / rect.width), (e.clientY - rect.top) * (canvas.height / rect.height));
-    setIsDrawing(true);
-  }, []);
-
-  const stopDrawing = useCallback(() => {
-    setIsDrawing(false);
-    if (canvasRef.current) { setHasStrokes(true); onStrokesChange(canvasRef.current.toDataURL()); }
-  }, [onStrokesChange]);
-
-  const clear = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
-    setHasStrokes(false); onStrokesChange("");
-  }, [onStrokesChange]);
-
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between">
-        <Label className="flex items-center gap-1 text-xs"><Pencil className="h-3 w-3" />Sketch</Label>
-        {hasStrokes && <button className="text-xs text-muted-foreground hover:text-foreground" onClick={clear}><RotateCcw className="inline h-3 w-3" /> Clear</button>}
-      </div>
-      <canvas ref={canvasRef} width={140} height={140}
-        className="h-[140px] w-[140px] cursor-crosshair rounded border border-dashed bg-muted/10"
-        onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={stopDrawing} onMouseLeave={stopDrawing}
-      />
-    </div>
-  );
-}
-
-export function PoseEditor({ value, onChange, poseDescription, fullPrompt }: PoseEditorProps) {
+export function PoseEditor({ value, onChange, poseDescription, fullPrompt, onDone }: PoseEditorProps) {
   const [variations, setVariations] = useState<PoseVariation[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
-  const [, setSketchDataUrl] = useState("");
   const hasGenerated = useRef(false);
 
   const generateVariations = useCallback(async () => {
@@ -167,22 +113,11 @@ export function PoseEditor({ value, onChange, poseDescription, fullPrompt }: Pos
 
   return (
     <div className="space-y-3">
-      {/* Generate button */}
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">
-          &quot;{poseDescription}&quot;
-        </p>
-        <Button size="sm" variant="outline" onClick={generateVariations} disabled={isGenerating || !poseDescription}>
-          {isGenerating ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Wand2 className="mr-1 h-3 w-3" />}
-          {variations.length > 0 ? "Regenerate" : "Generate Poses"}
-        </Button>
-      </div>
-
-      {/* Variation grid — pick one */}
+      {/* Variations grid */}
       {variations.length > 0 && (
         <div>
-          <Label className="text-xs">Choose a pose variation:</Label>
-          <div className="mt-1.5 grid grid-cols-4 gap-2">
+          <p className="mb-1.5 text-xs font-semibold">Pick a Variation</p>
+          <div className="grid grid-cols-4 gap-2">
             {variations.map((v, i) => (
               <button key={i} onClick={() => selectVariation(i)}
                 className={cn(
@@ -190,34 +125,39 @@ export function PoseEditor({ value, onChange, poseDescription, fullPrompt }: Pos
                   selectedIdx === i ? "border-primary bg-primary/5 text-primary" : "border-transparent text-muted-foreground hover:border-border"
                 )}
               >
-                <StickFigure keypoints={v.keypoints} size={70} />
-                <span className="text-[10px] font-medium leading-tight text-center">{v.poseName}</span>
+                <StickFigure keypoints={v.keypoints} size={60} />
+                <span className="text-[9px] font-medium leading-tight text-center">{v.poseName}</span>
               </button>
             ))}
           </div>
         </div>
       )}
 
-      {/* Selected pose — interactive editing */}
-      {value?.keypoints.length ? (
-        <div className="flex gap-3">
-          <div className="space-y-1">
-            <Label className="text-xs">Selected (drag joints)</Label>
-            <div className="flex items-center justify-center rounded-lg border bg-muted/10 p-1 text-primary">
-              <StickFigure keypoints={value.keypoints} size={140} interactive onKeypointDrag={handleKeypointDrag} />
-            </div>
-            <p className="text-center text-[10px] font-medium">{value.sourceName}</p>
+      {/* Interactive editor */}
+      {value?.keypoints?.length ? (
+        <div>
+          <p className="mb-1.5 text-xs font-semibold">Refine Joints</p>
+          <div className="flex items-center justify-center rounded-lg border bg-muted/10 p-2 text-primary">
+            <StickFigure keypoints={value.keypoints} size={160} interactive onKeypointDrag={handleKeypointDrag} />
           </div>
-          <SketchCanvas onStrokesChange={setSketchDataUrl} />
+          <p className="mt-1 text-center text-[10px] font-medium text-muted-foreground">{value.sourceName}</p>
         </div>
-      ) : !isGenerating && variations.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          Click &quot;Generate Poses&quot; to get pose variations from Gemini based on your description.
-        </p>
       ) : null}
 
-      {selectedIdx !== null && variations[selectedIdx]?.reasoning && (
-        <p className="text-[11px] italic text-muted-foreground">{variations[selectedIdx].reasoning}</p>
+      {/* Regenerate link when poses exist */}
+      {variations.length > 0 && (
+        <Button size="sm" variant="ghost" className="w-full text-xs" onClick={generateVariations} disabled={isGenerating}>
+          {isGenerating ? <><Loader2 className="mr-1 h-3 w-3 animate-spin" />Regenerating...</> : <><Wand2 className="mr-1 h-3 w-3" />Regenerate Poses</>}
+        </Button>
+      )}
+
+      {/* Primary CTA: Generate Poses → Done */}
+      {value?.keypoints?.length ? (
+        <Button className="w-full h-10" onClick={onDone}>Done</Button>
+      ) : (
+        <Button className="w-full h-10" onClick={generateVariations} disabled={isGenerating || !poseDescription}>
+          {isGenerating ? <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" />Generating Poses...</> : <><Wand2 className="mr-1.5 h-4 w-4" />Generate Poses</>}
+        </Button>
       )}
     </div>
   );

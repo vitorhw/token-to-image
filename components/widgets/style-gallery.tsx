@@ -1,10 +1,32 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useCallback, useState } from "react";
 import { Slider } from "@/components/ui/slider";
-import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { StyleSelection } from "@/types/tokens";
+import { WidgetStep, WidgetWizard } from "./widget-step";
 import { cn } from "@/lib/utils";
+import { Check, Loader2, Wand2 } from "lucide-react";
+
+const STYLE_REFERENCES: Record<string, string[]> = {
+  Photorealistic: ["Golden hour landscape", "Studio portrait", "Street photography", "Macro nature", "Aerial view", "Architecture interior"],
+  Impressionist: ["Water lilies", "Sunlit garden", "Rainy boulevard", "Countryside haystacks", "Ballerina in motion", "Cathedral facade"],
+  Watercolor: ["Misty landscape", "Flower bouquet", "Portrait sketch", "Seascape", "Forest path", "Sunset sky"],
+  "Oil Painting": ["Classical still life", "Baroque portrait", "Stormy seascape", "Pastoral scene", "Renaissance figure", "Floral arrangement"],
+  Anime: ["Shonen action scene", "Slice of life school", "Mecha pilot cockpit", "Fantasy floating islands", "Chibi character", "Neon night cityscape"],
+  "Pixel Art": ["Retro platformer", "Top-down RPG map", "Character sprite sheet", "Isometric scene", "Sunset dither gradient", "Dungeon interior"],
+  Sketch: ["Graphite portrait", "Architectural drawing", "Gesture figure study", "Nature botanical journal", "Urban ink sketch", "Charcoal still life"],
+  Cinematic: ["Film noir alley", "Sci-fi corridor", "Western standoff", "Horror silhouette", "Romance sunset", "War drama scene"],
+  "Pop Art": ["Warhol-style portrait", "Comic panel", "Bold consumer object", "Halftone gradient", "Neon typography", "Collage mashup"],
+  Minimalist: ["Single isolated object", "Geometric shapes", "Monochrome scene", "Continuous line drawing", "Negative space", "Zen garden"],
+  "Digital Art": ["Concept art hero", "Environment sci-fi vista", "Creature design", "Cyberpunk street", "Vehicle design", "Hologram UI"],
+  Fantasy: ["Dragon in flight", "Enchanted forest", "Wizard tower", "Underwater kingdom", "Elven city", "Dark throne room"],
+  Vintage: ["Sepia photograph", "1950s diner", "Victorian portrait", "Old postcard", "Retro travel poster", "Aged newspaper"],
+  Abstract: ["Color field painting", "Geometric composition", "Fluid acrylic pour", "Splatter expressionism", "Op art illusion", "Textured layers"],
+  "Art Deco": ["Gatsby ballroom", "Skyscraper facade", "Geometric jewelry", "Travel poster", "Cocktail lounge", "Fashion illustration"],
+  "Studio Ghibli": ["Countryside meadow wind", "Spirited bathhouse", "Flying steampunk machine", "Forest spirit", "Seaside Mediterranean town", "Rainy bus stop"],
+};
 
 const ALL_STYLES = [
   { name: "Photorealistic", gradient: "from-gray-400 to-gray-600", tags: ["realistic", "photorealistic", "photo", "professional", "cinematic"] },
@@ -29,10 +51,13 @@ interface StyleGalleryProps {
   value: StyleSelection | null;
   onChange: (style: StyleSelection) => void;
   tokenText?: string;
+  onDone?: () => void;
 }
 
-export function StyleGallery({ value, onChange, tokenText }: StyleGalleryProps) {
-  // Sort styles: matching styles first, then the rest
+export function StyleGallery({ value, onChange, tokenText, onDone }: StyleGalleryProps) {
+  const [generatedImages, setGeneratedImages] = useState<Record<string, string>>({});
+  const [isGeneratingRefs, setIsGeneratingRefs] = useState(false);
+
   const sortedStyles = useMemo(() => {
     if (!tokenText) return ALL_STYLES;
     const t = tokenText.toLowerCase();
@@ -47,50 +72,133 @@ export function StyleGallery({ value, onChange, tokenText }: StyleGalleryProps) 
     tokenText.toLowerCase().includes(tag)
   );
 
-  function selectStyle(name: string) {
-    onChange({ exemplarUrl: "", styleName: name, strength: value?.strength ?? 0.7 });
-  }
+  const concepts = value?.styleName ? (STYLE_REFERENCES[value.styleName] ?? []) : [];
+
+  const selectStyle = useCallback((name: string) => {
+    setGeneratedImages({});
+    onChange({ exemplarUrls: [], styleName: name, strength: value?.strength ?? 0.7, selectedReferences: [] });
+  }, [onChange, value?.strength]);
+
+  const toggleReference = useCallback((label: string) => {
+    if (!value) return;
+    const current = value.selectedReferences ?? [];
+    const next = current.includes(label) ? current.filter(r => r !== label) : [...current, label];
+    onChange({ ...value, selectedReferences: next });
+  }, [value, onChange]);
+
+  const generateReferenceImages = useCallback(async () => {
+    if (!value?.styleName || !concepts.length) return;
+    setIsGeneratingRefs(true);
+    try {
+      const res = await fetch("/api/generate-style-refs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ styleName: value.styleName, concepts }),
+      });
+      const data = await res.json();
+      if (data.images) setGeneratedImages(data.images);
+    } catch (err) {
+      console.error("Failed to generate reference images:", err);
+    } finally {
+      setIsGeneratingRefs(false);
+    }
+  }, [value?.styleName, concepts]);
 
   return (
-    <div className="space-y-3">
-      {hasMatches && (
-        <Label className="text-xs text-muted-foreground">
-          Suggested styles for &quot;{tokenText}&quot;
-        </Label>
-      )}
-      <div className="grid grid-cols-4 gap-2">
-        {sortedStyles.slice(0, 12).map((style, i) => (
-          <button key={style.name} onClick={() => selectStyle(style.name)}
-            className={cn(
-              "group flex flex-col items-center gap-1 rounded-lg border-2 p-1.5 transition-all hover:scale-105",
-              value?.styleName === style.name
-                ? "border-primary bg-primary/5"
-                : "border-transparent hover:border-border",
-              hasMatches && i < (sortedStyles.filter((s) =>
-                s.tags.some(tag => (tokenText || "").toLowerCase().includes(tag))
-              ).length) && "ring-1 ring-primary/20",
-            )}
-          >
-            <div className={cn("h-12 w-full rounded-md bg-gradient-to-br", style.gradient)} />
-            <span className="text-[10px] font-medium leading-tight">{style.name}</span>
-          </button>
-        ))}
-      </div>
+    <WidgetWizard onDone={onDone}>
+      <WidgetStep
+        step={1}
+        title="Choose a Style"
+        complete={!!value?.styleName}
+      >
+        <div className="grid grid-cols-4 gap-2">
+          {sortedStyles.slice(0, 12).map((style) => (
+            <button key={style.name} onClick={() => selectStyle(style.name)}
+              className={cn(
+                "flex flex-col items-center gap-1 rounded-lg border-2 p-1.5 transition-all hover:scale-105",
+                value?.styleName === style.name
+                  ? "border-primary bg-primary/5"
+                  : "border-transparent hover:border-border",
+              )}
+            >
+              <div className={cn("h-10 w-full rounded-md bg-gradient-to-br", style.gradient)} />
+              <span className="text-[10px] font-medium leading-tight">{style.name}</span>
+            </button>
+          ))}
+        </div>
+      </WidgetStep>
 
-      {value && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label className="text-xs">Style Strength: {Math.round(value.strength * 100)}%</Label>
-            <span className="text-xs text-muted-foreground">{value.styleName}</span>
-          </div>
-          <Slider value={[value.strength * 100]}
-            onValueChange={(val) => onChange({ ...value, strength: (Array.isArray(val) ? val[0] : val) / 100 })}
-            min={10} max={100} step={5} />
-          <p className="text-xs text-muted-foreground">
-            Style name enriches the text prompt sent to the model
+        <WidgetStep step={2} title="Select Reference Concepts" hidden={!value || concepts.length === 0}>
+          {value && concepts.length > 0 && (
+            <>
+              <div className="mb-2 flex items-center justify-between">
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={generateReferenceImages} disabled={isGeneratingRefs}>
+                  {isGeneratingRefs ? (
+                    <><Loader2 className="mr-1 h-3 w-3 animate-spin" />Generating...</>
+                  ) : (
+                    <><Wand2 className="mr-1 h-3 w-3" />{Object.keys(generatedImages).length > 0 ? "Regenerate" : "Generate"} Images</>
+                  )}
+                </Button>
+                {(value.selectedReferences?.length ?? 0) > 0 && (
+                  <Badge variant="secondary" className="text-[10px]">{value.selectedReferences.length} selected</Badge>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {concepts.map((concept) => {
+                  const isSelected = value.selectedReferences?.includes(concept) ?? false;
+                  const imageUrl = generatedImages[concept];
+                  return (
+                    <button key={concept} onClick={() => toggleReference(concept)}
+                      className={cn(
+                        "relative flex flex-col overflow-hidden rounded-lg border-2 text-left transition-all hover:scale-[1.03]",
+                        isSelected ? "border-primary bg-primary/5" : "border-border/50 hover:border-border",
+                      )}
+                    >
+                      {imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={imageUrl} alt={concept} className="w-full aspect-square object-cover" />
+                      ) : (
+                        <div className="w-full aspect-square bg-muted/20 flex items-center justify-center">
+                          <span className="text-[9px] text-muted-foreground/60 px-1 text-center leading-tight">{concept}</span>
+                        </div>
+                      )}
+                      {isSelected && (
+                        <div className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                          <Check className="h-3 w-3" />
+                        </div>
+                      )}
+                      <p className="px-1.5 py-1 text-[10px] font-medium leading-tight truncate w-full">{concept}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </WidgetStep>
+
+        <WidgetStep step={concepts.length > 0 ? 3 : 2} title="Adjust Strength" hidden={!value}>
+          {value && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">{value.styleName}</span>
+                <span className="font-medium">{Math.round(value.strength * 100)}%</span>
+              </div>
+              <Slider value={[value.strength * 100]}
+                onValueChange={(val) => onChange({ ...value, strength: (Array.isArray(val) ? val[0] : val) / 100 })}
+                min={10} max={100} step={5} />
+            </div>
+          )}
+        </WidgetStep>
+
+      {/* Preview of what gets sent */}
+      {value && (value.selectedReferences?.length ?? 0) > 0 && (
+        <div className="rounded-lg border bg-muted/20 p-2.5">
+          <p className="text-[10px] font-medium text-muted-foreground mb-1">Sent to Model</p>
+          <p className="text-[11px] font-mono text-foreground/80 leading-relaxed">
+            &ldquo;{value.styleName} style, evoking {value.selectedReferences.join(", ")}.&rdquo;
           </p>
         </div>
       )}
-    </div>
+    </WidgetWizard>
   );
 }

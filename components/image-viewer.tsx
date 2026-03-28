@@ -1,17 +1,14 @@
 "use client";
 
 import { GenerationResult } from "@/types/tokens";
-import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Clock, Loader2, Info } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Loader2, Info } from "lucide-react";
 
 interface ImageViewerProps {
   currentImage: GenerationResult | null;
-  history: GenerationResult[];
-  onSelectHistoryItem: (item: GenerationResult) => void;
   isGenerating: boolean;
   generationStatus?: string;
   enrichedPrompt?: string;
@@ -21,8 +18,10 @@ interface ImageViewerProps {
 }
 
 export function ImageViewer({
-  currentImage, history, onSelectHistoryItem,
-  isGenerating, generationStatus, enrichedPrompt,
+  currentImage,
+  isGenerating,
+  generationStatus,
+  enrichedPrompt,
   debugConditioningImages,
   useTestDepthMap,
   onToggleTestDepthMap,
@@ -32,7 +31,7 @@ export function ImageViewer({
   return (
     <div className="space-y-3">
       {/* Image */}
-      <div className="relative mx-auto max-w-2xl overflow-hidden rounded-xl border bg-muted/10">
+      <div className="relative overflow-hidden rounded-xl border bg-muted/10">
         {isGenerating ? (
           <div className="flex aspect-square items-center justify-center">
             <div className="flex flex-col items-center gap-3">
@@ -98,24 +97,23 @@ export function ImageViewer({
 
       {/* Debug: Raw conditioning images */}
       {!isGenerating && currentImage && (debugConditioningImages?.length || onToggleTestDepthMap) && (
-        <div className="mx-auto max-w-2xl">
-          <details className="rounded-lg border bg-muted/10 p-3">
-            <summary className="text-xs font-medium cursor-pointer flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
-              <span className="text-[10px]">&#9660;</span>
-              Debug: Conditioning ({debugConditioningImages?.length ?? 0} images)
-            </summary>
-            {onToggleTestDepthMap && (
-              <label className="mt-3 flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={useTestDepthMap ?? false}
-                  onChange={(e) => onToggleTestDepthMap(e.target.checked)}
-                  className="rounded"
-                />
+        <details className="rounded-lg border bg-muted/10 p-3">
+          <summary className="text-xs font-medium cursor-pointer flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
+            <span className="text-[10px]">&#9660;</span>
+            Debug: Conditioning ({debugConditioningImages?.length ?? 0} images)
+          </summary>
+          {onToggleTestDepthMap && (
+            <div className="mt-3 flex items-center gap-2">
+              <Checkbox
+                checked={useTestDepthMap ?? false}
+                onCheckedChange={(checked) => onToggleTestDepthMap(checked === true)}
+              />
+              <Label className="text-xs text-muted-foreground cursor-pointer">
                 Use test depth map (high-contrast left-side rectangle)
-              </label>
-            )}
-            {debugConditioningImages && debugConditioningImages.length > 0 && (
+              </Label>
+            </div>
+          )}
+          {debugConditioningImages && debugConditioningImages.length > 0 && (
             <div className="mt-3 grid grid-cols-2 gap-3">
               {debugConditioningImages.map((img, i) => (
                 <div key={i} className="rounded-lg border overflow-hidden bg-black">
@@ -130,35 +128,8 @@ export function ImageViewer({
                 </div>
               ))}
             </div>
-            )}
-          </details>
-        </div>
-      )}
-
-      {/* History */}
-      {history.length > 1 && (
-        <div className="mx-auto max-w-2xl">
-          <div className="mb-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Clock className="h-3 w-3" />
-            {history.length} iterations
-          </div>
-          <ScrollArea className="w-full">
-            <div className="flex gap-1.5 pb-2">
-              {history.map((item, i) => (
-                <button key={item.timestamp} onClick={() => onSelectHistoryItem(item)}
-                  className={cn(
-                    "relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 transition-all hover:scale-105",
-                    currentImage?.timestamp === item.timestamp ? "border-primary" : "border-transparent opacity-60 hover:opacity-100"
-                  )}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={item.imageUrl} alt={`v${i+1}`} className="h-full w-full object-cover" />
-                  <span className="absolute bottom-0 left-0 rounded-tr bg-black/60 px-1 text-[9px] text-white">v{i+1}</span>
-                </button>
-              ))}
-            </div>
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
-        </div>
+          )}
+        </details>
       )}
     </div>
   );

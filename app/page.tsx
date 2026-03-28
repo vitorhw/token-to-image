@@ -4,12 +4,15 @@ import { useReducer, useCallback, useRef, useMemo, useState } from "react";
 import { PromptInput } from "@/components/prompt-input";
 import { ImageViewer } from "@/components/image-viewer";
 import { PromptSuggestions } from "@/components/prompt-suggestions";
+import { MaskPainter } from "@/components/widgets/mask-painter";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Info } from "lucide-react";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Info, Paintbrush, Image as ImageIcon } from "lucide-react";
 import { TAXONOMY } from "@/lib/token-taxonomy";
+import { cn } from "@/lib/utils";
 import {
   AppState,
   DetectedToken,
@@ -18,6 +21,12 @@ import {
   WidgetState,
 } from "@/types/tokens";
 
+interface Snapshot {
+  prompt: string;
+  widgetState: WidgetState;
+  detectedTokens: DetectedToken[];
+}
+
 type Action =
   | { type: "SET_PROMPT"; prompt: string }
   | { type: "SET_DETECTING"; isDetecting: boolean }
@@ -25,13 +34,14 @@ type Action =
   | { type: "SET_GENERATION_STATUS"; status: string }
   | { type: "SET_TOKENS"; tokens: DetectedToken[] }
   | { type: "UPDATE_WIDGET_STATE"; state: Partial<WidgetState> }
-  | { type: "ADD_GENERATION"; result: GenerationResult & { enrichedPrompt?: string } }
+  | { type: "ADD_GENERATION"; result: GenerationResult & { enrichedPrompt?: string }; snapshot: Snapshot }
   | { type: "SELECT_HISTORY_ITEM"; result: GenerationResult }
   | { type: "RESET_WIDGETS" };
 
 interface ExtendedAppState extends AppState {
   generationStatus: string;
   enrichedPrompts: Map<number, string>;
+  snapshots: Map<number, Snapshot>;
 }
 
 const initialState: ExtendedAppState = {
@@ -45,6 +55,7 @@ const initialState: ExtendedAppState = {
   activeWidget: null,
   generationStatus: "",
   enrichedPrompts: new Map(),
+  snapshots: new Map(),
 };
 
 function reducer(state: ExtendedAppState, action: Action): ExtendedAppState {
@@ -63,9 +74,11 @@ function reducer(state: ExtendedAppState, action: Action): ExtendedAppState {
       return { ...state, widgetState: { ...state.widgetState, ...action.state } };
     case "ADD_GENERATION": {
       const newPrompts = new Map(state.enrichedPrompts);
+      const newSnapshots = new Map(state.snapshots);
       if (action.result.enrichedPrompt) {
         newPrompts.set(action.result.timestamp, action.result.enrichedPrompt);
       }
+      newSnapshots.set(action.result.timestamp, action.snapshot);
       return {
         ...state,
         currentImage: action.result,
@@ -73,10 +86,22 @@ function reducer(state: ExtendedAppState, action: Action): ExtendedAppState {
         widgetState: { ...state.widgetState, maskRegion: undefined },
         generationStatus: "",
         enrichedPrompts: newPrompts,
+        snapshots: newSnapshots,
       };
     }
-    case "SELECT_HISTORY_ITEM":
+    case "SELECT_HISTORY_ITEM": {
+      const snapshot = state.snapshots.get(action.result.timestamp);
+      if (snapshot) {
+        return {
+          ...state,
+          currentImage: action.result,
+          prompt: snapshot.prompt,
+          widgetState: { ...snapshot.widgetState, maskRegion: undefined },
+          detectedTokens: snapshot.detectedTokens,
+        };
+      }
       return { ...state, currentImage: action.result };
+    }
     case "RESET_WIDGETS":
       return { ...state, widgetState: {} };
     default:
@@ -90,16 +115,13 @@ export default function Home() {
     { type: string; dataUrl: string; scale: number }[]
   >([]);
   const [useTestDepthMap, setUseTestDepthMap] = useState(false);
+  const [showMaskDialog, setShowMaskDialog] = useState(false);
   const detectAbortRef = useRef<AbortController | null>(null);
 
   const configuredWidgets = useMemo(() => {
     const configured = new Set<TokenCategory>();
     const ws = state.widgetState;
     if (ws.colorSelections?.length) configured.add("color");
-    // Camera: only configured if user changed from defaults
-    if (ws.cameraSettings && (ws.cameraSettings.elevation !== 0 || ws.cameraSettings.azimuth !== 0 || ws.cameraSettings.focalLength !== 50)) {
-      configured.add("camera_angle");
-    }
     if (ws.styleSelection?.styleName) configured.add("style");
     if (ws.poseSelection?.keypoints?.length) configured.add("pose");
     if (ws.spatialRegions?.length) {
@@ -110,6 +132,12 @@ export default function Home() {
     if (ws.maskRegion) configured.add("masking");
     return configured;
   }, [state.widgetState]);
+
+  // Check if all detected tokens have their widgets configured
+  const allWidgetsResolved = useMemo(() => {
+    if (state.detectedTokens.length === 0) return true;
+    return state.detectedTokens.every(t => configuredWidgets.has(t.category));
+  }, [state.detectedTokens, configuredWidgets]);
 
   const handleDetect = useCallback(async () => {
     if (!state.prompt.trim()) return;
@@ -139,24 +167,22 @@ export default function Home() {
     dispatch({ type: "SET_GENERATING", isGenerating: true });
     dispatch({ type: "SET_GENERATION_STATUS", status: "Rendering conditioning images..." });
 
-    // Render ALL conditioning images from widget state (client-side)
     const conditioning = await import("@/lib/conditioning");
     const widgetStateWithImages = { ...state.widgetState };
 
-    // Spatial regions → depth map (or test depth map for diagnostics)
     if (useTestDepthMap) {
       widgetStateWithImages.depthMapDataUrl = conditioning.renderTestDepthMap();
-      console.log("[client] Using TEST depth map");
+    } else if (state.widgetState.depthMapDataUrl) {
+      // Use the Gemini-generated depth map if available
+      widgetStateWithImages.depthMapDataUrl = state.widgetState.depthMapDataUrl;
     } else if (state.widgetState.spatialRegions?.length) {
+      // Fallback: render client-side depth map from rectangles
       widgetStateWithImages.depthMapDataUrl = conditioning.renderDepthMap(state.widgetState.spatialRegions);
-      console.log("[client] Rendered spatial depth map");
     }
-    // Pose keypoints → skeleton image
     if (state.widgetState.poseSelection?.keypoints.length) {
       widgetStateWithImages.poseImageDataUrl = conditioning.renderPoseSkeleton(state.widgetState.poseSelection.keypoints);
-      console.log("[client] Rendered pose skeleton");
     }
-    // Capture raw conditioning images for debug UI
+
     const debugImages: { type: string; dataUrl: string; scale: number }[] = [];
     if (widgetStateWithImages.depthMapDataUrl) {
       debugImages.push({ type: "depth", dataUrl: widgetStateWithImages.depthMapDataUrl, scale: 0.55 });
@@ -176,6 +202,13 @@ export default function Home() {
       else dispatch({ type: "SET_GENERATION_STATUS", status: `Taking longer than usual... (${elapsed}s)` });
     }, 1000);
 
+    // Capture snapshot BEFORE the generation call
+    const snapshot: Snapshot = {
+      prompt: state.prompt,
+      widgetState: { ...state.widgetState },
+      detectedTokens: [...state.detectedTokens],
+    };
+
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
@@ -188,7 +221,11 @@ export default function Home() {
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      dispatch({ type: "ADD_GENERATION", result: { ...data, enrichedPrompt: data.enrichedPrompt } });
+      dispatch({
+        type: "ADD_GENERATION",
+        result: { ...data, enrichedPrompt: data.enrichedPrompt },
+        snapshot,
+      });
     } catch (err) {
       console.error("Generation failed:", err);
       dispatch({ type: "SET_GENERATION_STATUS", status: `Error: ${err instanceof Error ? err.message : "Failed"}` });
@@ -196,7 +233,7 @@ export default function Home() {
       clearInterval(statusInterval);
       dispatch({ type: "SET_GENERATING", isGenerating: false });
     }
-  }, [state.prompt, state.widgetState, state.currentImage, useTestDepthMap]);
+  }, [state.prompt, state.widgetState, state.detectedTokens, state.currentImage, useTestDepthMap]);
 
   const currentEnrichedPrompt = state.currentImage
     ? state.enrichedPrompts.get(state.currentImage.timestamp)
@@ -214,89 +251,189 @@ export default function Home() {
               Supported Tokens
             </span>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-3xl">
             <DialogHeader>
-              <DialogTitle>Token Taxonomy</DialogTitle>
+              <DialogTitle>Supported Tokens</DialogTitle>
             </DialogHeader>
-            <ScrollArea className="max-h-[60vh]">
-              <div className="space-y-4 pr-4">
-                {TAXONOMY.map((entry) => (
-                  <div key={entry.category} className="rounded-lg border p-3">
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-sm font-semibold">{entry.label}</h4>
-                      <Badge variant="outline" className="text-xs">{entry.subcategory}</Badge>
+            <ScrollArea className="max-h-[75vh]">
+              <div className="pr-4">
+                {/* Column headers */}
+                <div className="mb-2 grid grid-cols-[100px_1fr_160px] gap-6 px-3 text-xs font-semibold tracking-wide text-muted-foreground">
+                  <span>Token</span>
+                  <span>Conditioning Signal</span>
+                  <span>Pipeline</span>
+                </div>
+
+                {/* Rows */}
+                <div className="space-y-2">
+                  {TAXONOMY.map((entry) => (
+                    <div key={entry.category} className="grid grid-cols-[100px_1fr_160px] gap-6 items-start rounded-lg border px-4 py-3">
+                      <span className="text-sm font-semibold">{entry.label}</span>
+
+                      <div>
+                        {entry.conditioning ? (
+                          <div className="space-y-0.5">
+                            <Badge variant="secondary" className="text-[10px]">{entry.conditioning}</Badge>
+                            <p className="text-[11px] text-muted-foreground leading-relaxed">{entry.conditioningDetail}</p>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/50">None (text only)</span>
+                        )}
+                      </div>
+
+                      <Badge variant="outline" className="text-[10px] w-fit">{entry.pipeline}</Badge>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">{entry.underspecification}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      <span className="font-medium">Widget:</span> {entry.widgetDescription}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      <span className="font-medium">Source:</span> {entry.literatureSource}
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {entry.patterns.slice(0, 12).map((p) => (
-                        <Badge key={p} variant="secondary" className="text-[10px]">{p}</Badge>
-                      ))}
-                      {entry.patterns.length > 12 && (
-                        <Badge variant="secondary" className="text-[10px]">+{entry.patterns.length - 12} more</Badge>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+
+                {/* Sources */}
+                <p className="mt-3 text-[10px] text-muted-foreground">
+                  {TAXONOMY.map(e => e.source).join(" | ")}
+                </p>
               </div>
             </ScrollArea>
           </DialogContent>
         </Dialog>
       </header>
 
-      {/* Chat-style main area */}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-3xl px-4 py-6">
-            {state.currentImage || state.isGenerating ? (
-              <ImageViewer
-                currentImage={state.currentImage}
-                history={state.generationHistory}
-                onSelectHistoryItem={(item) =>
-                  dispatch({ type: "SELECT_HISTORY_ITEM", result: item })
-                }
+      {/* Two-panel layout */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* LEFT PANEL — Prompt, tokens, widgets, generate */}
+        <div className="flex w-[420px] shrink-0 flex-col border-r">
+          <ScrollArea className="flex-1">
+            <div className="px-6 py-3 space-y-4">
+              {/* Prompt input */}
+              <PromptInput
+                prompt={state.prompt}
+                onPromptChange={(p) => dispatch({ type: "SET_PROMPT", prompt: p })}
+                detectedTokens={state.detectedTokens}
+                isDetecting={state.isDetecting}
                 isGenerating={state.isGenerating}
-                generationStatus={state.generationStatus}
-                enrichedPrompt={currentEnrichedPrompt}
-                debugConditioningImages={debugConditioningImages}
-                useTestDepthMap={useTestDepthMap}
-                onToggleTestDepthMap={setUseTestDepthMap}
+                onDetect={handleDetect}
+                onGenerate={handleGenerate}
+                widgetState={state.widgetState}
+                onWidgetStateChange={(s) => dispatch({ type: "UPDATE_WIDGET_STATE", state: s })}
+                configuredWidgets={configuredWidgets}
+                currentImageUrl={state.currentImage?.imageUrl}
+                allWidgetsResolved={allWidgetsResolved}
               />
-            ) : !state.prompt.trim() ? (
-              <PromptSuggestions
-                onSelect={(p) => {
-                  dispatch({ type: "SET_PROMPT", prompt: p });
-                  // Set the contentEditable text
-                  const el = document.querySelector("[contenteditable]");
-                  if (el) el.textContent = p;
-                }}
-              />
-            ) : null}
-          </div>
+
+              {/* Prompt suggestions — below input so layout doesn't shift */}
+              {!state.prompt.trim() && !state.currentImage && (
+                <PromptSuggestions
+                  onSelect={(p) => {
+                    dispatch({ type: "SET_PROMPT", prompt: p });
+                    const el = document.querySelector("[contenteditable]");
+                    if (el) el.textContent = p;
+                  }}
+                />
+              )}
+
+              {/* Mask / Inpaint button — always visible when there's an image */}
+              {state.currentImage && !state.isGenerating && (
+                <>
+                  <Separator />
+                  <Dialog open={showMaskDialog} onOpenChange={setShowMaskDialog}>
+                    <DialogTrigger>
+                      <span className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground cursor-pointer">
+                        <Paintbrush className="h-4 w-4" />
+                        Edit Region (Inpainting)
+                      </span>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-lg">
+                      <DialogHeader>
+                        <DialogTitle>Paint Mask for Inpainting</DialogTitle>
+                      </DialogHeader>
+                      <MaskPainter
+                        imageUrl={state.currentImage.imageUrl}
+                        value={state.widgetState.maskRegion ?? null}
+                        onChange={(mask) => {
+                          dispatch({ type: "UPDATE_WIDGET_STATE", state: { maskRegion: mask } });
+                        }}
+                      />
+                      <div className="flex justify-end gap-2 pt-2">
+                        <Button variant="outline" onClick={() => setShowMaskDialog(false)}>
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            setShowMaskDialog(false);
+                            handleGenerate();
+                          }}
+                          disabled={!state.widgetState.maskRegion?.dataUrl}
+                        >
+                          Apply &amp; Regenerate
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </>
+              )}
+            </div>
+          </ScrollArea>
         </div>
 
-        {/* Prompt input fixed at bottom */}
-        <div className="shrink-0 border-t bg-background">
-          <div className="mx-auto max-w-3xl px-4 py-3">
-            <PromptInput
-              prompt={state.prompt}
-              onPromptChange={(p) => dispatch({ type: "SET_PROMPT", prompt: p })}
-              detectedTokens={state.detectedTokens}
-              isDetecting={state.isDetecting}
-              isGenerating={state.isGenerating}
-              onDetect={handleDetect}
-              onGenerate={handleGenerate}
-              widgetState={state.widgetState}
-              onWidgetStateChange={(s) => dispatch({ type: "UPDATE_WIDGET_STATE", state: s })}
-              configuredWidgets={configuredWidgets}
-              currentImageUrl={state.currentImage?.imageUrl}
-            />
+        {/* RIGHT PANEL — Iterations + Image */}
+        <div className="flex flex-1 flex-col overflow-hidden">
+          {/* Iteration thumbnails */}
+          <div className="shrink-0 border-b bg-muted/30 px-6 py-3">
+            {state.generationHistory.length > 0 ? (
+              <>
+                <ScrollArea className="w-full">
+                  <div className="flex gap-2 pb-1">
+                    {state.generationHistory.map((item, i) => (
+                      <button
+                        key={item.timestamp}
+                        onClick={() => dispatch({ type: "SELECT_HISTORY_ITEM", result: item })}
+                        className={cn(
+                          "relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border-2 transition-all hover:scale-105",
+                          state.currentImage?.timestamp === item.timestamp
+                            ? "border-primary ring-2 ring-primary/20"
+                            : "border-transparent opacity-60 hover:opacity-100"
+                        )}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={item.imageUrl} alt={`v${i + 1}`} className="h-full w-full object-cover" />
+                        <span className="absolute bottom-0 left-0 rounded-tr bg-black/60 px-1 text-[9px] text-white">
+                          v{i + 1}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <ScrollBar orientation="horizontal" />
+                </ScrollArea>
+              </>
+            ) : (
+              <div>
+                <div className="flex gap-2">
+                  {[0, 1, 2].map(i => (
+                    <div key={i} className="h-16 w-16 shrink-0 rounded-lg border-2 border-dashed border-muted-foreground/15 bg-muted/30" />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Image display */}
+          <div className="flex-1 overflow-y-auto">
+            <div className="max-w-3xl p-6">
+              {state.currentImage || state.isGenerating ? (
+                <ImageViewer
+                  currentImage={state.currentImage}
+                  isGenerating={state.isGenerating}
+                  generationStatus={state.generationStatus}
+                  enrichedPrompt={currentEnrichedPrompt}
+                  debugConditioningImages={debugConditioningImages}
+                  useTestDepthMap={useTestDepthMap}
+                  onToggleTestDepthMap={setUseTestDepthMap}
+                />
+              ) : (
+                /* Skeleton for image */
+                <div className="aspect-square max-w-xl rounded-xl border-2 border-dashed border-muted-foreground/15 bg-muted/10 flex items-center justify-center">
+                  <ImageIcon className="h-10 w-10 opacity-20 text-muted-foreground" strokeWidth={1.5} />
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

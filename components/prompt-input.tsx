@@ -7,15 +7,12 @@ import { Loader2 } from "lucide-react";
 import { DetectedToken, TokenCategory, WidgetState } from "@/types/tokens";
 import { ColorPicker } from "@/components/widgets/color-picker";
 import { StyleGallery } from "@/components/widgets/style-gallery";
-import { CameraControls } from "@/components/widgets/camera-controls";
 import { MaskPainter } from "@/components/widgets/mask-painter";
 import { SpatialCanvas } from "@/components/widgets/spatial-canvas";
 import { PoseEditor } from "@/components/widgets/pose-editor";
 import { cn } from "@/lib/utils";
 
-// Extract key subjects/objects from prompt for auto-populating spatial canvas
 function extractSubjects(prompt: string): string[] {
-  // Simple heuristic: find nouns after articles/determiners
   const words = prompt.split(/\s+/);
   const subjects: string[] = [];
   const skipWords = new Set(["a", "an", "the", "is", "are", "was", "were", "in", "on", "at", "to", "and", "or", "with", "by", "for", "of", "from", "towards", "toward", "into", "through"]);
@@ -24,7 +21,6 @@ function extractSubjects(prompt: string): string[] {
   for (let i = 0; i < words.length; i++) {
     const w = words[i].toLowerCase().replace(/[,.:;!?]/g, "");
     if (["a", "an", "the"].includes(w) && i + 1 < words.length) {
-      // Collect noun phrase after article
       let phrase = "";
       for (let j = i + 1; j < Math.min(i + 4, words.length); j++) {
         const next = words[j].replace(/[,.:;!?]/g, "").toLowerCase();
@@ -42,7 +38,6 @@ const CATEGORY_COLORS: Record<TokenCategory, { bg: string; border: string; text:
   spatial_size: { bg: "bg-blue-50", border: "border-blue-300", text: "text-blue-700" },
   spatial_depth: { bg: "bg-indigo-50", border: "border-indigo-300", text: "text-indigo-700" },
   color: { bg: "bg-rose-50", border: "border-rose-300", text: "text-rose-700" },
-  camera_angle: { bg: "bg-purple-50", border: "border-purple-300", text: "text-purple-700" },
   style: { bg: "bg-amber-50", border: "border-amber-300", text: "text-amber-700" },
   pose: { bg: "bg-green-50", border: "border-green-300", text: "text-green-700" },
   masking: { bg: "bg-red-50", border: "border-red-300", text: "text-red-700" },
@@ -53,7 +48,6 @@ const CATEGORY_LABELS: Record<TokenCategory, string> = {
   spatial_size: "Object Size",
   spatial_depth: "Depth & Layers",
   color: "Color",
-  camera_angle: "Camera Angle",
   style: "Art Style",
   pose: "Pose & Gesture",
   masking: "Selective Edit",
@@ -71,6 +65,7 @@ interface PromptInputProps {
   onWidgetStateChange: (state: Partial<WidgetState>) => void;
   configuredWidgets: Set<TokenCategory>;
   currentImageUrl?: string;
+  allWidgetsResolved: boolean;
 }
 
 function TokenWidget({
@@ -88,11 +83,12 @@ function TokenWidget({
   prompt: string;
   currentImageUrl?: string;
 }) {
+  const [open, setOpen] = useState(false);
   const colors = CATEGORY_COLORS[token.category];
   const isConfigured = configuredWidgets.has(token.category);
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger>
         <span
           className={cn(
@@ -121,6 +117,7 @@ function TokenWidget({
             targets={[token.text]}
             value={widgetState.colorSelections ?? []}
             onChange={(colors) => onWidgetStateChange({ colorSelections: colors })}
+            onDone={() => setOpen(false)}
           />
         )}
         {token.category === "style" && (
@@ -128,13 +125,7 @@ function TokenWidget({
             value={widgetState.styleSelection ?? null}
             onChange={(style) => onWidgetStateChange({ styleSelection: style })}
             tokenText={token.text}
-          />
-        )}
-        {token.category === "camera_angle" && (
-          <CameraControls
-            value={widgetState.cameraSettings ?? { elevation: 0, azimuth: 0, focalLength: 50, distance: 1 }}
-            onChange={(settings) => onWidgetStateChange({ cameraSettings: settings })}
-            tokenText={token.text}
+            onDone={() => setOpen(false)}
           />
         )}
         {token.category === "masking" && currentImageUrl && (
@@ -149,6 +140,11 @@ function TokenWidget({
             value={widgetState.spatialRegions ?? []}
             onChange={(regions) => onWidgetStateChange({ spatialRegions: regions })}
             subjects={extractSubjects(prompt)}
+            prompt={prompt}
+            onDepthMapGenerated={(dataUrl) => onWidgetStateChange({ depthMapDataUrl: dataUrl })}
+            generatedMapUrl={widgetState.depthMapDataUrl}
+            poseKeypoints={widgetState.poseSelection?.keypoints}
+            onDone={() => setOpen(false)}
           />
         )}
         {token.category === "pose" && (
@@ -157,6 +153,7 @@ function TokenWidget({
             onChange={(pose) => onWidgetStateChange({ poseSelection: pose })}
             poseDescription={token.text}
             fullPrompt={prompt}
+            onDone={() => setOpen(false)}
           />
         )}
       </PopoverContent>
@@ -176,10 +173,21 @@ export function PromptInput({
   onWidgetStateChange,
   configuredWidgets,
   currentImageUrl,
+  allWidgetsResolved,
 }: PromptInputProps) {
   const editableRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const lastPromptRef = useRef(prompt);
+
+  // Sync contentEditable when prompt changes externally
+  useEffect(() => {
+    const el = editableRef.current;
+    if (!el) return;
+    if (el.innerText !== prompt && prompt !== lastPromptRef.current) {
+      el.innerText = prompt;
+      lastPromptRef.current = prompt;
+    }
+  }, [prompt]);
 
   // Live debounced token detection
   useEffect(() => {
@@ -208,24 +216,21 @@ export function PromptInput({
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        onGenerate();
+        if (allWidgetsResolved) onGenerate();
       }
     },
-    [onGenerate]
+    [onGenerate, allWidgetsResolved]
   );
 
-  // Inline token view — fix indices by finding actual token text in prompt
+  // Inline token view
   const inlineTokenView = useMemo(() => {
     if (!detectedTokens.length || !prompt) return null;
 
-    // Re-compute indices by actually finding the token text in the prompt
-    // Gemini's indices can be off-by-one or wrong
     const fixedTokens = detectedTokens.map((token) => {
       const idx = prompt.indexOf(token.text);
       if (idx >= 0) {
         return { ...token, startIndex: idx, endIndex: idx + token.text.length };
       }
-      // Fallback: try case-insensitive
       const lowerIdx = prompt.toLowerCase().indexOf(token.text.toLowerCase());
       if (lowerIdx >= 0) {
         return { ...token, startIndex: lowerIdx, endIndex: lowerIdx + token.text.length };
@@ -233,7 +238,6 @@ export function PromptInput({
       return token;
     });
 
-    // Remove overlapping tokens (keep the first one)
     const nonOverlapping = fixedTokens.filter((token, i) => {
       for (let j = 0; j < i; j++) {
         if (token.startIndex < fixedTokens[j].endIndex && token.endIndex > fixedTokens[j].startIndex) {
@@ -274,22 +278,14 @@ export function PromptInput({
     return parts;
   }, [prompt, detectedTokens, widgetState, onWidgetStateChange, configuredWidgets, currentImageUrl]);
 
-  return (
-    <div className="space-y-0">
-      {/* Inline token annotations */}
-      {inlineTokenView && (
-        <div className="rounded-t-xl border border-b-0 bg-muted/20 px-4 py-3">
-          <p className="flex flex-wrap items-center gap-y-2 text-sm leading-relaxed">
-            {inlineTokenView}
-          </p>
-        </div>
-      )}
+  const unresolvedCount = detectedTokens.length > 0
+    ? detectedTokens.filter(t => !configuredWidgets.has(t.category)).length
+    : 0;
 
-      {/* Input area */}
-      <div className={cn(
-        "relative border bg-background",
-        inlineTokenView ? "rounded-b-xl" : "rounded-xl",
-      )}>
+  return (
+    <div className="space-y-2">
+      {/* Input area — just the text box */}
+      <div className="rounded-xl border bg-background">
         <div
           ref={editableRef}
           contentEditable
@@ -298,35 +294,53 @@ export function PromptInput({
           onKeyDown={handleKeyDown}
           data-placeholder="Describe the image you want to create..."
           className={cn(
-            "min-h-[50px] px-4 py-3 pr-44 text-base outline-none",
+            "min-h-[80px] px-4 py-3 text-sm outline-none",
             "empty:before:pointer-events-none empty:before:text-muted-foreground empty:before:content-[attr(data-placeholder)]",
             isGenerating && "pointer-events-none opacity-60",
           )}
         />
+      </div>
 
-        <div className="flex items-center justify-between border-t px-3 py-2">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            {isDetecting && (
-              <span className="flex items-center gap-1.5">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Analyzing tokens...
-              </span>
-            )}
-            {!isDetecting && detectedTokens.length > 0 && (
-              <span>
-                {detectedTokens.length} token{detectedTokens.length > 1 ? "s" : ""} detected
-              </span>
-            )}
-          </div>
-          <Button
-            onClick={onGenerate}
-            disabled={isGenerating || isDetecting || !prompt.trim()}
-            className="bg-primary px-5"
-          >
-            {isGenerating && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-            Generate Image
-          </Button>
+      {/* Detected tokens card — always visible */}
+      {inlineTokenView ? (
+        <div className="rounded-xl border bg-muted/20 px-4 py-3">
+          <p className="mb-1.5 text-[10px] font-medium tracking-wider text-muted-foreground">
+            Detected Tokens
+          </p>
+          <p className="flex flex-wrap items-center gap-y-2 text-sm leading-relaxed">
+            {inlineTokenView}
+          </p>
         </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-muted-foreground/20 bg-muted/10 px-4 py-3">
+          <p className="mb-2 text-[10px] font-medium tracking-wider text-muted-foreground">
+            Detected Tokens
+          </p>
+          {isDetecting ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Analyzing your prompt...
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <div className="h-6 w-20 rounded-md bg-muted/50" />
+              <div className="h-6 w-16 rounded-md bg-muted/50" />
+              <div className="h-6 w-24 rounded-md bg-muted/50" />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Generate button — right-aligned, content width */}
+      <div className="flex justify-end">
+        <Button
+          onClick={onGenerate}
+          disabled={isGenerating || isDetecting || !prompt.trim() || !allWidgetsResolved}
+          className="bg-primary px-6 h-10"
+        >
+          {isGenerating && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+          Generate Image
+        </Button>
       </div>
     </div>
   );

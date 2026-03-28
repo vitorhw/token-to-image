@@ -3,7 +3,6 @@ export type TokenCategory =
   | "spatial_size"
   | "spatial_depth"
   | "color"
-  | "camera_angle"
   | "style"
   | "pose"
   | "masking";
@@ -26,19 +25,13 @@ export interface SpatialRegion {
   width: number;
   height: number;
   depth: number;
+  rotation: number; // degrees, 0-360
 }
 
 export interface ColorSelection {
   hex: string;
   name: string;
   target: string;
-}
-
-export interface CameraSettings {
-  elevation: number;
-  azimuth: number;
-  focalLength: number;
-  distance: number;
 }
 
 export interface PoseKeypoint {
@@ -54,9 +47,10 @@ export interface PoseSelection {
 }
 
 export interface StyleSelection {
-  exemplarUrl: string;
+  exemplarUrls: string[];
   styleName: string;
   strength: number;
+  selectedReferences: string[]; // concept names chosen by user
 }
 
 export interface MaskRegion {
@@ -67,7 +61,6 @@ export interface MaskRegion {
 export interface WidgetState {
   spatialRegions?: SpatialRegion[];
   colorSelections?: ColorSelection[];
-  cameraSettings?: CameraSettings;
   poseSelection?: PoseSelection;
   styleSelection?: StyleSelection;
   maskRegion?: MaskRegion;
