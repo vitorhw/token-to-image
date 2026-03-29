@@ -180,7 +180,13 @@ export default function Home() {
       widgetStateWithImages.depthMapDataUrl = conditioning.renderDepthMap(state.widgetState.spatialRegions);
     }
     if (state.widgetState.poseSelection?.keypoints.length) {
-      widgetStateWithImages.poseImageDataUrl = conditioning.renderPoseSkeleton(state.widgetState.poseSelection.keypoints);
+      widgetStateWithImages.poseImageDataUrl = conditioning.renderPoseSkeleton(
+        state.widgetState.poseSelection.keypoints,
+        {
+          spatialRegions: state.widgetState.spatialRegions,
+          detectedTokens: state.detectedTokens,
+        }
+      );
     }
 
     const debugImages: { type: string; dataUrl: string; scale: number }[] = [];

@@ -40,9 +40,9 @@ export function SpatialCanvas({ value, onChange, subjects, prompt, onDepthMapGen
     setGenerating(true);
     setMapError(null);
     try {
-      // Render client-side reference depth map to send as guide
+      // Render labeled layout diagram for Gemini to interpret
       const conditioning = await import("@/lib/conditioning");
-      const referenceMapDataUrl = conditioning.renderDepthMap(value);
+      const layoutDiagramDataUrl = conditioning.renderLayoutDiagram(value);
 
       const res = await fetch("/api/generate-spatial-map", {
         method: "POST",
@@ -50,7 +50,7 @@ export function SpatialCanvas({ value, onChange, subjects, prompt, onDepthMapGen
         body: JSON.stringify({
           regions: value,
           prompt: prompt || "",
-          referenceMapDataUrl,
+          layoutDiagramDataUrl,
           poseKeypoints: poseKeypoints?.length ? poseKeypoints : undefined,
         }),
       });

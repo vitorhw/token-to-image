@@ -10,7 +10,7 @@ const TOKEN_CATEGORIES: TokenCategory[] = [
 
 export async function detectTokens(prompt: string): Promise<DetectedToken[]> {
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: "gemini-3.1-pro-preview",
     contents: `You are a text-to-image prompt analyzer. Given a user's prompt, identify ambiguous visual tokens that would benefit from visual specification rather than text alone.
 
 For each ambiguous token, return:
@@ -78,7 +78,7 @@ export async function generatePoseVariations(description: string, fullPrompt: st
   ];
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: "gemini-3.1-pro-preview",
     contents: `You are a human pose estimation expert. Given a description, generate 4 DIFFERENT plausible 2D skeleton pose variations.
 
 Coordinate space: 0-1 normalized. (0,0) = top-left, (1,1) = bottom-right.
@@ -152,7 +152,7 @@ Each variation should be a genuinely different pose, not just tiny shifts.`,
 export async function generateSpatialMap(
   regions: { label: string; x: number; y: number; width: number; height: number; depth: number; rotation?: number }[],
   prompt: string,
-  referenceMapDataUrl?: string,
+  layoutDiagramDataUrl?: string,
   poseKeypoints?: { name: string; x: number; y: number }[],
 ): Promise<string> {
   const layoutDesc = regions.map(r => {
@@ -168,32 +168,37 @@ ${poseKeypoints.map(kp => `  ${kp.name}: (${Math.round(kp.x * 100)}%, ${Math.rou
 The person's silhouette shape must reflect this skeleton — limb positions, head angle, etc.`;
   }
 
-  // Build content parts — include reference image if available
+  // Build content parts — include layout diagram if available
   const contentParts: any[] = [];
 
-  if (referenceMapDataUrl) {
-    const base64 = referenceMapDataUrl.split(",")[1];
-    const mime = referenceMapDataUrl.match(/:(.*?);/)?.[1] ?? "image/png";
+  if (layoutDiagramDataUrl) {
+    const base64 = layoutDiagramDataUrl.split(",")[1];
+    const mime = layoutDiagramDataUrl.match(/:(.*?);/)?.[1] ?? "image/png";
     contentParts.push({
       inlineData: { data: base64, mimeType: mime },
     });
     contentParts.push({
-      text: `The image above is a rough reference layout showing the approximate positions, sizes, and rotations of objects as gray rectangles. Your job is to REFINE this layout into a proper depth map:
+      text: `The image above is a LAYOUT DIAGRAM — a specification showing where objects should appear in a scene. Each colored rectangle represents one object. The label inside each rectangle identifies what the object is, and the depth annotation indicates how close it should be to the camera.
 
-1. Keep EVERY object at the EXACT SAME position, size, and rotation shown in the reference
-2. Replace the rectangles with appropriate SILHOUETTE shapes (person → human shape, tree → tree shape, building → building shape, etc.)
-3. Keep the EXACT SAME gray brightness values — do not change depths
-4. Pure grayscale, no color, no outlines, no detail inside shapes — just solid filled silhouettes
-5. Keep the black background
-6. Add slight gaussian blur to edges
-7. NO TEXT in the output
+Your task: Generate a 1024x1024 GRAYSCALE DEPTH MAP based on this layout diagram.
+
+Rules:
+1. Pure black background (rgb 0,0,0) = infinitely far away
+2. Brighter pixels = closer to camera. Each object's brightness must match its annotated depth value
+3. Place each object at the position and size shown in the diagram
+4. Replace each rectangle with an appropriate SILHOUETTE shape for that object (e.g., "person" → human silhouette, "tree" → tree silhouette, "building" → building silhouette, "car" → car silhouette)
+5. Solid filled silhouettes only — no outlines, no internal detail, no texture
+6. Slight gaussian blur on silhouette edges for smooth depth transitions
+7. Absolutely NO TEXT, NO LABELS, NO ANNOTATIONS in the output — pure grayscale pixels only
+8. AGAIN: ABSOLUTELY NO TEXT, NO LABELS, NO ANNOTATIONS in the output — pure grayscale pixels only
+9. The output depth map must be a valid grayscale image, with no alpha channel and YOU MUST FOLLOW ALL THE RULES ABOVE.
 
 Scene context: "${prompt}"
 
-Objects:
+Objects in the diagram:
 ${layoutDesc}${poseDesc}
 
-Output a refined 1024x1024 grayscale depth map that matches the reference layout exactly but with proper silhouettes instead of rectangles.`,
+Generate the depth map now.`,
     });
   } else {
     contentParts.push({
@@ -217,7 +222,7 @@ Generate a 1024x1024 grayscale depth map.`,
   }
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-image",
+    model: "gemini-3-pro-image-preview",
     contents: contentParts,
     config: {
       responseModalities: ["IMAGE"],
@@ -234,7 +239,7 @@ Generate a 1024x1024 grayscale depth map.`,
 
 export async function generateStyleReference(styleName: string, concept: string): Promise<string> {
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-image",
+    model: "gemini-3-pro-image-preview",
     contents: `Generate a small thumbnail reference image in ${styleName} style depicting: ${concept}. Make it a clear, beautiful example of this style. Square format.`,
     config: {
       responseModalities: ["IMAGE"],
@@ -251,7 +256,7 @@ export async function generateStyleReference(styleName: string, concept: string)
 
 export async function generateWithGemini(prompt: string): Promise<string> {
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-image",
+    model: "gemini-3-pro-image-preview",
     contents: prompt,
     config: {
       responseModalities: ["TEXT", "IMAGE"],

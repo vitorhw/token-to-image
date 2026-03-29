@@ -81,8 +81,8 @@ Each widget uses `WidgetWizard` for paginated step-by-step navigation (Back/Next
 - `path` must be HuggingFace model ID (`Shakker-Labs/...`), not preset strings
 - `control_mode` not `controlnet_mode` — Union model field name
 - Shadcn v4 base-nova: no `asChild`, Slider returns `number | readonly number[]`, PopoverTrigger wraps `<span>` not `<button>`
-- Gemini image gen model: `gemini-2.5-flash-image` (stable, fallback to fal.ai)
-- Gemini text model: `gemini-2.5-flash` (token detection, pose gen)
+- Gemini image gen model: `gemini-3-pro-image-preview` (Nano Banana Pro, fallback to fal.ai)
+- Gemini text model: `gemini-3.1-pro-preview` (token detection, pose gen)
 - `Math.random()` in SSR causes hydration mismatch — use `useState` initializer
 - Pose detection is human-only — Gemini prompt explicitly excludes animals
 - Dialog default max-width is `max-w-lg` in `components/ui/dialog.tsx` — pass larger `className` to override
