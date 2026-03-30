@@ -1,6 +1,6 @@
 # Tokens to Image
 
-Resolve ambiguous text-to-image tokens with interactive visual widgets backed by real generation pipelines (ControlNet, IP-Adapter, inpainting).
+Resolve ambiguous text-to-image tokens with interactive visual widgets backed by real generation pipelines (ControlNet, reference-image guidance, inpainting).
 
 **CMPT 863** — Simon Fraser University
 
@@ -21,7 +21,7 @@ The system detects ambiguous tokens in real-time and surfaces context-aware visu
 | Spatial Canvas | Gemini-generated MiDaS depth map (or client-side fallback) | ControlNet Depth    |
 | Pose Editor    | OpenPose skeleton (Gemini 4x variations, draggable joints) | ControlNet Pose     |
 | Color Picker   | Context-aware palettes with custom hex                     | Prompt enrichment   |
-| Style Gallery  | Style name + reference concepts + IP-Adapter exemplars     | Prompt + IP-Adapter |
+| Style Gallery  | Style name + one generated reference image                 | Prompt + Reference Image |
 | Mask Painter   | Binary mask overlay                                        | Flux Inpainting     |
 
 Widgets use a paginated step-by-step interface (WidgetWizard) with Back/Next navigation.

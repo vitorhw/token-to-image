@@ -4,7 +4,7 @@ import { useRef, useCallback, useMemo, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Loader2 } from "lucide-react";
-import { DetectedToken, TokenCategory, WidgetState } from "@/types/tokens";
+import { DetectedToken, StyleSuggestion, TokenCategory, WidgetState } from "@/types/tokens";
 import { ColorPicker } from "@/components/widgets/color-picker";
 import { StyleGallery } from "@/components/widgets/style-gallery";
 import { MaskPainter } from "@/components/widgets/mask-painter";
@@ -53,6 +53,12 @@ const CATEGORY_LABELS: Record<TokenCategory, string> = {
   masking: "Selective Edit",
 };
 
+export interface EagerStylesData {
+  prompt: string;
+  suggestions: StyleSuggestion[];
+  isLoadingSuggestions: boolean;
+}
+
 interface PromptInputProps {
   prompt: string;
   onPromptChange: (prompt: string) => void;
@@ -66,6 +72,7 @@ interface PromptInputProps {
   configuredWidgets: Set<TokenCategory>;
   currentImageUrl?: string;
   allWidgetsResolved: boolean;
+  eagerStyles?: EagerStylesData | null;
 }
 
 function TokenWidget({
@@ -75,6 +82,7 @@ function TokenWidget({
   configuredWidgets,
   prompt,
   currentImageUrl,
+  eagerStyles,
 }: {
   token: DetectedToken;
   widgetState: WidgetState;
@@ -82,6 +90,7 @@ function TokenWidget({
   configuredWidgets: Set<TokenCategory>;
   prompt: string;
   currentImageUrl?: string;
+  eagerStyles?: EagerStylesData | null;
 }) {
   const [open, setOpen] = useState(false);
   const colors = CATEGORY_COLORS[token.category];
@@ -126,6 +135,8 @@ function TokenWidget({
             onChange={(style) => onWidgetStateChange({ styleSelection: style })}
             tokenText={token.text}
             onDone={() => setOpen(false)}
+            eagerStyles={eagerStyles}
+            prompt={prompt}
           />
         )}
         {token.category === "masking" && currentImageUrl && (
@@ -174,6 +185,7 @@ export function PromptInput({
   configuredWidgets,
   currentImageUrl,
   allWidgetsResolved,
+  eagerStyles,
 }: PromptInputProps) {
   const editableRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -267,6 +279,7 @@ export function PromptInput({
           configuredWidgets={configuredWidgets}
           prompt={prompt}
           currentImageUrl={currentImageUrl}
+          eagerStyles={eagerStyles}
         />
       );
       lastIndex = token.endIndex;
@@ -276,7 +289,7 @@ export function PromptInput({
     }
 
     return parts;
-  }, [prompt, detectedTokens, widgetState, onWidgetStateChange, configuredWidgets, currentImageUrl]);
+  }, [prompt, detectedTokens, widgetState, onWidgetStateChange, configuredWidgets, currentImageUrl, eagerStyles]);
 
   const unresolvedCount = detectedTokens.length > 0
     ? detectedTokens.filter(t => !configuredWidgets.has(t.category)).length

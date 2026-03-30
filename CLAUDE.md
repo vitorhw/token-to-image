@@ -47,7 +47,9 @@ Two-panel: **Left** (420px) = prompt input, detected tokens card, generate butto
 | `/api/generate` | Main generation pipeline |
 | `/api/generate-pose` | Gemini pose variation generation (4x) |
 | `/api/generate-spatial-map` | Gemini depth map from spatial layout |
-| `/api/generate-style-refs` | Gemini reference image generation per style concept |
+| `/api/generate-style-refs` | Gemini reference image generation per style concept (legacy fallback) |
+| `/api/suggest-styles` | Gemini prompt-aware style suggestions (text, ~1-2s) |
+| `/api/generate-style-preview` | Gemini style preview of user's scene in a given style |
 | `/api/inpaint` | Flux inpainting with mask |
 
 ### Widgets (4 active token types)
@@ -56,10 +58,10 @@ Two-panel: **Left** (420px) = prompt input, detected tokens card, generate butto
 |---|---|---|---|
 | Spatial | Draggable canvas + depth sliders | Gemini depth map → ControlNet @ 0.95 | Flux + ControlNet |
 | Color | Palette picker + custom hex | None (prompt enrichment only) | Text-only |
-| Style | Gallery + reference concepts + strength | IP-Adapter (when exemplars available) | Flux + IP-Adapter |
+| Style | Prompt-aware suggestions + strength slider | Gemini-suggested reference image | Flux + Reference Image |
 | Pose | Gemini 4x skeletons + joint editor | OpenPose skeleton → ControlNet @ 0.9 | Flux + ControlNet |
 
-Each widget uses `WidgetWizard` for paginated step-by-step navigation (Back/Next).
+Most widgets use `WidgetWizard` for paginated step-by-step navigation. Style uses a single-page layout with eager suggestions.
 
 ### ControlNet Schema (fal.ai flux-general)
 

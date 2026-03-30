@@ -15,7 +15,7 @@
 ## Table of Contents
 
 1. [Pipeline Architecture (Verified)](#1-pipeline-architecture)
-2. [Issue 1: Style/IP-Adapter Pipeline Completely Broken](#issue-1)
+2. [Issue 1: Style Conditioning Should Switch To Reference-Only Mode](#issue-1)
 3. [Issue 2: Gemini Depth Map Fidelity — Unverified Hypothesis](#issue-2)
 4. [Issue 3: Stale Cached Depth Maps After Edits](#issue-3)
 5. [Issue 4: Clearing Inpainting Mask Leaves Router in Invalid State](#issue-4)
@@ -54,7 +54,7 @@ User types prompt
       1. buildEnrichedPrompt() — style → spatial → prompt → color → pose
       2. Route decision:
          a. maskRegion + previousImageUrl → inpaintWithFlux() → fal-ai/flux-general/inpainting
-         b. depthMapDataUrl || poseImageDataUrl || exemplarUrls.length → generateWithControls() → fal-ai/flux-general + ControlNet Union
+         b. depthMapDataUrl || poseImageDataUrl || exemplarUrls.length → generateWithControls() → fal-ai/flux-general + ControlNet/Reference Image
          c. else → generateWithGemini() → gemini-2.5-flash-image (fallback: generateWithFlux() → fal-ai/flux-general)
   → Result { imageUrl, provider, pipeline, timestamp, enrichedPrompt, conditioningImages }
   → Client stores in generation history with snapshot { prompt, widgetState, detectedTokens }
@@ -80,68 +80,58 @@ Both audits say this order is "correct for model attention." That is a reasonabl
 ---
 
 <a id="issue-1"></a>
-## Issue 1: Style/IP-Adapter Pipeline Completely Broken
+## Issue 1: Style Conditioning Switched To Reference-Only Mode, Pending Live Verification
 
-**Severity**: HIGH — A documented feature that silently does nothing. Three independent failures.
+**Severity**: MEDIUM — the riskier IP-Adapter path has been removed from the primary style flow, but the new reference-image path still needs an end-to-end smoke test against the live Fal endpoint.
 
-**Source**: Identified by both audits. The codex audit correctly identified the fal payload problems; the claude audit initially understated the fix as "just connect URLs."
+**Status update (2026-03-30)**:
 
-### Failure 1: Exemplar URLs are never populated
+- The widget-state wiring remains fixed: generated Gemini style refs populate `widgetState.styleSelection.exemplarUrls`.
+- The Style Gallery now enforces a single selected style reference in the UI.
+- The Fal style payload now uses top-level `reference_image_url` / `reference_strength` instead of `ip_adapters`.
+- Pipeline labels, summaries, and docs now describe style conditioning as `Reference Image`, not `IP-Adapter`.
+- The existing array-shaped style state was kept for compatibility, but the app now caps style refs to one active item and uses only index `0` on the server.
 
-- `style-gallery.tsx:79` — `selectStyle()` always sets `exemplarUrls: []`
-- Generated reference images are stored in component-local state (`generatedImages` in `useState` at line 58) and displayed in the UI
-- `selectedReferences` (line 84-86) are concept name strings (e.g., "Water lilies"), NOT image URLs
-- No code anywhere writes actual image data URLs into `exemplarUrls`
-- Therefore `widgetState.styleSelection.exemplarUrls` is always `[]`
+### Why this change was made
 
-**Downstream effects**:
-- `fal.ts:98` — `widgetState.styleSelection?.exemplarUrls?.length` is always falsy, so `ip_adapters` is never added
-- `pipeline-router.ts:92` — `hasConditioningImages()` returns false for style-only generations
-- Style-only generations fall through to Gemini text-only (not even Flux), because `hasConditioningImages()` returns false
-- The strength slider (style-gallery.tsx:186-188) does nothing — strength is only read inside the dead `ip_adapters` branch
+A real style-only generation previously failed live with `422 Unprocessable Entity` when the app sent an IP-Adapter payload. The endpoint complained that `image_url` and `image_encoder_path` were missing from `ip_adapters[0]`, which showed that the live server contract did not match the request shape the app was sending.
 
-### Failure 2: The fal.ts IP-Adapter payload is structurally wrong
+The same `flux-general` endpoint also exposes top-level `reference_image_url` / `reference_strength` fields. That path is simpler, aligns better with the product need of "pick one good style reference image," and avoids adapter-specific schema ambiguity.
 
-Current code (fal.ts:99-102):
-```ts
-input.ip_adapters = widgetState.styleSelection.exemplarUrls.map((url) => ({
-  path: url,                                                    // WRONG
-  ip_adapter_scale: widgetState.styleSelection!.strength,       // WRONG
-}));
-```
+### What was implemented
 
-**Verified against two authoritative sources:**
+1. **Single-reference style selection**
+   - The widget now behaves as single-select.
+   - Clicking a new style reference replaces the old one.
+   - Clicking the selected reference again clears it.
+   - Older multi-reference state is normalized safely rather than assumed away.
 
-| Field | Current code | Installed SDK types (`endpoints.d.ts`) | fal.ai public API docs |
-|---|---|---|---|
-| Reference image | `path: url` (wrong field) | `ip_adapter_image_url` (required) | `image_url` (required) |
-| Adapter weights | missing | `path` (required) | `path` (required) |
-| Strength | `ip_adapter_scale` (wrong name) | `scale` (optional) | `scale` (required per docs) |
-| Image encoder | missing entirely | not in type | `image_encoder_path` (required per docs) |
+2. **Reference-only Fal payload**
+   - The style branch in `generateWithControls()` no longer sends `ip_adapters`.
+   - The selected Gemini-generated style image is still uploaded first.
+   - The uploaded URL is now sent as `reference_image_url`.
+   - The style slider is now sent as `reference_strength`.
 
-The SDK types and the public docs disagree on the reference image field name (`ip_adapter_image_url` vs `image_url`). Since the code uses `as any` casting on the `fal.subscribe` call (fal.ts:123), type checking is bypassed at compile time. The server-side field name is what matters, and the public docs indicate `image_url`.
+3. **Compatibility safeguards**
+   - `StyleSelection.exemplarUrls` and `selectedReferences` remain arrays to avoid breaking snapshots, history replay, and existing state merges.
+   - The server only consumes the first style exemplar, so older snapshots with multiple entries degrade safely.
 
-### Failure 3: Missing required fields for IP-Adapter to function
+4. **User-facing naming updates**
+   - Style-conditioned runs are now labeled `Flux + Reference Image`.
+   - Mixed runs are labeled with combinations like `Flux + Depth ControlNet + Reference Image`.
+   - Supporting docs and token taxonomy language were updated to match the new mechanism.
 
-Even with correct field names, the current code is missing:
-- **Adapter weights path** (`path`) — must point to a HuggingFace IP-Adapter model (e.g., `XLabs-AI/flux-ip-adapter`)
-- **Image encoder path** (`image_encoder_path`) — required per fal.ai docs (e.g., `openai/clip-vit-large-patch14`)
+### Current behavior
 
-### What style tokens actually do today
+- If the user selects a style but never generates a style reference image, style still affects prompt enrichment only.
+- If the user generates and selects one style reference image, the request now routes through Fal reference-image guidance instead of the old IP-Adapter path.
+- Depth and pose conditioning continue to share the same conditioned generation branch, and style now layers onto that branch through the simpler top-level reference-image fields.
 
-Style tokens only produce prompt enrichment text via `buildEnrichedPrompt()` (pipeline-router.ts:33-40). Example: "Watercolor style, evoking Misty landscape, Flower bouquet." No conditioning signal is generated.
+### Remaining work
 
-### Notable alternative
-
-The fal.ai API also supports a simpler `reference_image_url` + `reference_strength` (default 0.65) for basic style transfer without IP-Adapter. This could be a lighter-weight approach to style conditioning.
-
-### Fix requirements
-
-1. Persist generated reference image data URLs into `widgetState.styleSelection.exemplarUrls`
-2. Upload exemplar images to fal storage (same as depth/pose images)
-3. Build a correct `ip_adapters` payload with all required fields
-4. Determine the correct adapter weights path and image encoder path empirically
-5. OR: use the simpler `reference_image_url` API as a first step
+1. Run a style-only smoke test against the live Fal endpoint.
+2. Run a mixed depth+style smoke test to confirm `reference_image_url` coexists correctly with ControlNet inputs.
+3. Verify whether the current `reference_strength` mapping feels qualitatively right in practice or needs tuning.
 
 ---
 
@@ -301,26 +291,22 @@ const fixedTokens = detectedTokens.map((token) => {
 <a id="issue-8"></a>
 ## Issue 8: All Conditioned Generations Mislabeled "Flux + ControlNet"
 
-**Severity**: LOW
+**Severity**: RESOLVED IN CODE (2026-03-30)
 
 **Source**: Identified by the codex audit, confirmed by the claude audit.
 
-All conditioned generations share one branch in pipeline-router.ts:108-113 and are labeled `pipeline: "Flux + ControlNet"` regardless of actual conditioning. If the IP-Adapter pipeline is fixed (Issue 1), style-only generations would be mislabeled.
-
-**Fix**: Derive the label from active conditioning types. E.g., "Flux + Depth ControlNet", "Flux + Pose ControlNet", "Flux + IP-Adapter", or combinations.
+The conditioned branch now derives its label from the active conditioning signals. Style-only generations now show `Flux + Reference Image`, and mixed runs should show combinations such as `Flux + Depth ControlNet + Reference Image`.
 
 ---
 
 <a id="issue-9"></a>
 ## Issue 9: Style Gallery Preview Never Renders
 
-**Severity**: LOW
+**Severity**: RESOLVED IN CODE (2026-03-30)
 
 **Source**: Identified by the claude audit. Confirmed.
 
-The "Sent to Model" preview div in style-gallery.tsx:193-201 is a direct child of `<WidgetWizard>`, not wrapped in `<WidgetStep>`. The `WidgetWizard` component (widget-step.tsx:35-45) filters children by `child.type === WidgetStep` — this div is silently discarded.
-
-**Fix**: Move outside `<WidgetWizard>` or wrap in a `<WidgetStep>`.
+The preview block has been moved outside `<WidgetWizard>`, so it now renders and also reports whether Fal will receive attached exemplar images.
 
 ---
 
@@ -394,18 +380,30 @@ All items confirmed by reading every file:
 | `end_percentage` | 0.85/0.6 (depth), 0.65 (pose) | ✓ | ✓ | **Correct** |
 | `path` | `"Shakker-Labs/FLUX.1-dev-ControlNet-Union-Pro-2.0"` | ✓ (string) | ✓ (HF model ID) | **Correct** |
 
-### fal.ai IP-Adapter (broken — see Issue 1)
+### fal.ai IP-Adapter (historical failure mode)
 
-| Field | Code (fal.ts:99-102) | SDK Types | Public API Docs | Status |
+| Field | Previous code | SDK Types | Public API Docs | Status |
 |---|---|---|---|---|
-| Reference image | `path: url` | `ip_adapter_image_url` | `image_url` | **Wrong** — image URL is in `path` field |
-| Adapter weights | missing | `path` (required) | `path` (required) | **Missing** |
-| Strength | `ip_adapter_scale` | `scale` | `scale` | **Wrong field name** |
-| Image encoder | missing | not in type | `image_encoder_path` (required) | **Missing** |
+| Reference image | `ip_adapter_image_url: uploadedStyleUrls` | `ip_adapter_image_url` | `image_url` | **Mismatch against live validation** |
+| Adapter weights | `path: FLUX_IP_ADAPTER_PATH` | `path` (required) | `path` (required) | **Present** |
+| Strength | `scale: styleStrength` | `scale` | `scale` | **Present** |
+| Image encoder | omitted | not in type | `image_encoder_path` (required) | **Missing for live server validation** |
 
-**Important discrepancy**: The installed SDK types (`@fal-ai/client` 1.9.4) define the reference image field as `ip_adapter_image_url`, while the public API docs use `image_url`. The code uses `as any` casting on `fal.subscribe()` (fal.ts:123), so types are not enforced at compile time. The server-side behavior determines which field name works. Both audits noted this discrepancy.
+**Important discrepancy**: The installed SDK types (`@fal-ai/client` 1.9.4) define the reference image field as `ip_adapter_image_url`, while the public API docs use `image_url`. The observed 422 error indicated the live server validation was aligned with the public docs shape, not the SDK type.
 
-**Finding missed by both audits**: The fal.ai public docs list `image_encoder_path` (e.g., `openai/clip-vit-large-patch14`) as a required field for IP-Adapter. Neither audit identified this missing field.
+**Verdict**: This is now a historical failure mode, not the current primary implementation. It explains why the codebase switched style conditioning to the simpler reference-only path.
+
+### fal.ai Reference-Only Mode (recommended implementation path)
+
+| Field | Proposed code | SDK Types | Status |
+|---|---|---|---|
+| Reference image | `reference_image_url: uploadedStyleUrl` | `reference_image_url` | **Directly supported** |
+| Strength | `reference_strength: styleStrength` | `reference_strength` | **Directly supported** |
+| Timing | optional `reference_start` / `reference_end` | supported | **Optional; can defer** |
+| Adapter weights | none | not needed | **No extra config required** |
+| Image encoder | none | not needed | **No extra config required** |
+
+**Recommendation**: For this codebase, reference-only mode is the better primary implementation because it aligns with the actual user interaction model of "pick one good style reference image and bias the result toward it" without requiring adapter-specific infrastructure.
 
 ### fal.ai File Input Handling
 
@@ -450,8 +448,8 @@ The code at fal.ts:131-137 uses `fal-ai/flux-general/inpainting` with `{ image_u
 | "`fal.storage.upload(File)` required — data URLs rejected as `control_image_url`" | **Overstated**. fal docs accept data URIs but discourage them. Upload is the correct practical choice but not strictly required. |
 | "`path` must be HuggingFace model ID" | **Too strong**. Current docs describe `path` as "URL or the path to the model weights." The repo's chosen path happens to be a HF model ID, but raw URLs are also valid. |
 | "Each widget uses `WidgetWizard` for paginated step-by-step navigation (Back/Next)" | **False**. Only `StyleGallery` uses `WidgetWizard`. `ColorPicker`, `SpatialCanvas`, `PoseEditor`, and `MaskPainter` have custom flows. There is no "Back" button — only navigation dots (clickable to go back) and "Continue"/"Done". |
-| Style pipeline: "IP-Adapter (when exemplars available)" | **Misleading for current code**. `exemplarUrls` is structurally never populated. The "when exemplars available" condition is impossible to satisfy. Additionally, the fal payload is wrong even if URLs were provided. |
-| Widget table lists `Flux + IP-Adapter` pipeline for Style | Should say "Text-only (IP-Adapter pipeline present but broken)". |
+| Style pipeline: "IP-Adapter (when exemplars available)" | **Outdated after the implementation change**. Style now uses top-level `reference_image_url` guidance with a single selected exemplar. |
+| Widget table lists `Flux + IP-Adapter` pipeline for Style | **Outdated after the implementation change**. The current user-facing wording should describe a reference-image-guided style pipeline. |
 | Key Files table: `widget-step.tsx` as "Shared WidgetWizard + WidgetStep" | **Overstated**. Only used by StyleGallery. Not a shared system across widgets. |
 
 ---
@@ -462,13 +460,13 @@ The code at fal.ts:131-137 uses `fal-ai/flux-general/inpainting` with `{ image_u
 ### Where the claude audit was more accurate
 
 1. **WidgetWizard documentation drift** — Correctly identified that only StyleGallery uses it, and there's no Back button. Codex audit didn't flag this.
-2. **Style Gallery preview block** — Correctly identified it's silently discarded by WidgetWizard. Codex audit didn't catch this.
+2. **Style Gallery preview block** — Correctly identified it was silently discarded by WidgetWizard at audit time. Fixed in code on 2026-03-30 by moving it outside `WidgetWizard`.
 3. **Dead code inventory** — More comprehensive: `sv()`, `Eraser` import, `MaskPainter` unreachable path, `enrichedPrompt` dead field, `konva`/`react-konva` unused deps.
 4. **Line number precision** — 16 of 17 line references verified exactly correct (one was off by 1 on `fal.storage.upload` reference).
 
 ### Where the codex audit was more accurate
 
-1. **IP-Adapter payload errors** — Correctly identified all three field name errors and the missing adapter weights path. The original claude audit understated this as "the plumbing already exists, just needs URLs" (later corrected in its cross-audit section).
+1. **IP-Adapter payload errors** — Correctly identified all three field name errors and the missing adapter weights path. The later live validation failure directly motivated the switch to the simpler reference-only style path.
 2. **Stale depth maps** — Identified as a standalone issue with clear code path tracing. The original claude audit folded this into ISSUE-1 tangentially.
 3. **Mask clearing bug** — Identified the `{ dataUrl: "" }` truthiness problem. Missing from the original claude audit.
 4. **Token offset recomputation** — Unique finding: `indexOf` replacing model-provided offsets. Not in claude audit at all.
@@ -478,12 +476,12 @@ The code at fal.ts:131-137 uses `fal-ai/flux-general/inpainting` with `{ image_u
 
 ### Where the codex audit was wrong or overstated
 
-1. **"Image encoder path is not mentioned"** — Actually, the codex audit missed this too. The fal public docs show `image_encoder_path` as a required IP-Adapter field. Neither audit caught this.
+1. **"Image encoder path is not mentioned"** — Actually, the codex audit missed this too. The fal public docs show `image_encoder_path` as a required IP-Adapter field. Neither audit caught this, which is part of why the simpler reference-only path now looks preferable.
 2. **MaskPainter "works correctly"** — The codex audit flagged the mask clearing bug separately but then the claude audit's widget section said "MaskPainter works correctly" which the codex audit correctly caught as inconsistent.
 
 ### Genuinely uncertain items
 
-1. **IP-Adapter field names** — SDK types say `ip_adapter_image_url`, public docs say `image_url`. Without testing against the live API, the correct server-side field name is unknown. Both audits noted this.
+1. **Reference-only quality vs IP-Adapter quality** — The simpler `reference_image_url` path is now implemented because it is easier to validate and better aligned with the UI, but the exact qualitative tradeoff versus IP-Adapter has still not been empirically measured in this repo.
 2. **Gemini depth map quality** — Both audits agree the concern is plausible. Neither has empirical evidence. The claude audit overstates certainty; the codex audit correctly labels it a hypothesis.
 3. **Whether `fal.storage.upload` is truly required in practice** — The docs say data URIs work but are discouraged. The CLAUDE.md says they're rejected. This may reflect an actual server-side rejection for large images that the docs don't cover, or it may be outdated. The upload approach is correct regardless.
 
@@ -494,12 +492,10 @@ The code at fal.ts:131-137 uses `fal-ai/flux-general/inpainting` with `{ image_u
 
 ### Must Fix (pipeline correctness)
 
-1. **Fix style conditioning end-to-end (Issue 1)**
-   - Persist generated reference image URLs into `exemplarUrls` when user selects concepts
-   - Upload exemplar images to fal storage before sending
-   - Build correct `ip_adapters` payload: `image_url` (or `ip_adapter_image_url`), `path` (adapter weights), `scale`, and `image_encoder_path`
-   - Determine correct adapter weights and image encoder paths empirically
-   - OR: consider using the simpler `reference_image_url` + `reference_strength` API as a pragmatic first step
+1. **Verify the new reference-only style path live (Issue 1)**
+   - Run a style-only smoke test against the Fal endpoint
+   - Run a mixed depth+style smoke test to confirm coexistence with ControlNet inputs
+   - Tune `reference_strength` if the current slider mapping feels too weak or too strong
 
 2. **Invalidate cached depth maps (Issue 3)**
    - Clear `depthMapDataUrl` when `spatialRegions` change
@@ -513,17 +509,15 @@ The code at fal.ts:131-137 uses `fal-ai/flux-general/inpainting` with `{ image_u
 
 4. **Fix `/api/inpaint` route response (Issue 5)** — destructure return or remove unused route
 5. **Fix token offset recomputation (Issue 7)** — use model offsets when they match the text; fall back to `indexOf` only when they don't
-6. **Fix Style Gallery preview (Issue 9)** — move outside `<WidgetWizard>` or wrap in `<WidgetStep>`
-7. **Clear stale detected tokens (Issue 10)** — clear tokens when prompt is too short
-8. **Update CLAUDE.md** — correct claims about WidgetWizard, IP-Adapter, fal.storage.upload, `path` field
+6. **Clear stale detected tokens (Issue 10)** — clear tokens when prompt is too short
+7. **Update CLAUDE.md** — correct claims about WidgetWizard, style conditioning mechanism, fal.storage.upload, and `path`
 
 ### Nice to Have
 
-9. **Derive pipeline labels (Issue 8)** — label from active conditioning types
-10. **Remove dead code** — `sv()`, `Eraser` import, unreachable `MaskPainter` import, dead `enrichedPrompt` field
-11. **Remove unused dependencies** — `konva`, `react-konva`
-12. **A/B test Gemini vs client-side depth maps (Issue 2)** — empirical comparison needed
-13. **Measure actual base64 payload sizes (Issue 11)** — verify whether this is a real deployment concern
+8. **Remove dead code** — `sv()`, `Eraser` import, unreachable `MaskPainter` import, dead `enrichedPrompt` field
+9. **Remove unused dependencies** — `konva`, `react-konva`
+10. **A/B test Gemini vs client-side depth maps (Issue 2)** — empirical comparison needed
+11. **Measure actual base64 payload sizes (Issue 11)** — verify whether this is a real deployment concern
 
 ---
 
@@ -546,6 +540,6 @@ The code at fal.ts:131-137 uses `fal-ai/flux-general/inpainting` with `{ image_u
 |---|---|---|---|---|
 | Spatial | Draggable rectangles + depth/rotation sliders | Gemini-refined depth map (priority) OR client-side rectangle depth map (fallback) → ControlNet depth | Flux + ControlNet | **Working** (stale cache issue, Issue 3) |
 | Color | Preset palettes + custom hex picker | None (prompt enrichment only) | Text-only enrichment | **Working** |
-| Style | Gallery (16 styles) + reference concepts + strength slider | Intended: IP-Adapter. Actual: Nothing. | Intended: Flux + IP-Adapter. Actual: Text-only. | **Broken** (Issue 1) |
+| Style | Gallery (16 styles) + one selected reference concept + strength slider | Generated Gemini exemplar image → Fal upload → `reference_image_url` guidance (plus prompt enrichment) | Flux + Reference Image, or combined with other conditioning | **Implemented in code; live verification pending** (Issue 1) |
 | Pose | Gemini 4x skeleton variations + draggable SVG joints | OpenPose skeleton 1024px → ControlNet pose | Flux + ControlNet | **Working** |
 | Masking | Canvas painter over existing image | Binary B&W mask → Flux inpainting | Flux Inpainting | **Working** (router guard issue, Issue 4) |

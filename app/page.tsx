@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducer, useCallback, useRef, useMemo, useState } from "react";
+import { useReducer, useCallback, useRef, useMemo, useState, useEffect } from "react";
 import { PromptInput } from "@/components/prompt-input";
 import { ImageViewer } from "@/components/image-viewer";
 import { CandidateGrid } from "@/components/candidate-grid";
@@ -19,6 +19,7 @@ import {
   ConditioningImage,
   DetectedToken,
   GenerationResult,
+  StyleSuggestion,
   TokenCategory,
   WidgetState,
 } from "@/types/tokens";
@@ -127,6 +128,91 @@ export default function Home() {
     snapshot: Snapshot;
   } | null>(null);
   const detectAbortRef = useRef<AbortController | null>(null);
+
+  // Eager style suggestions — ephemeral cache, not part of snapshots
+  const [eagerStyles, setEagerStyles] = useState<{
+    prompt: string;
+    suggestions: StyleSuggestion[];
+    isLoadingSuggestions: boolean;
+  } | null>(null);
+  const eagerStyleAbortRef = useRef<AbortController | null>(null);
+  const eagerStyleGenIdRef = useRef(0);
+
+  // Trigger eager style suggestions when a style token is detected
+  useEffect(() => {
+    const hasStyleToken = state.detectedTokens.some(t => t.category === "style");
+    if (!hasStyleToken) return;
+    if (eagerStyles?.prompt === state.prompt) return;
+
+    const styleToken = state.detectedTokens.find(t => t.category === "style")!;
+
+    // Abort previous requests
+    if (eagerStyleAbortRef.current) eagerStyleAbortRef.current.abort();
+    const controller = new AbortController();
+    eagerStyleAbortRef.current = controller;
+    const genId = ++eagerStyleGenIdRef.current;
+
+    setEagerStyles({ prompt: state.prompt, suggestions: [], isLoadingSuggestions: true });
+
+    (async () => {
+      try {
+        // Phase 1: Get text suggestions
+        const res = await fetch("/api/suggest-styles", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: state.prompt, tokenText: styleToken.text }),
+          signal: controller.signal,
+        });
+        const data = await res.json();
+        const suggestions: StyleSuggestion[] = (data.suggestions ?? []).map(
+          (s: { styleName: string; description: string }) => ({
+            ...s,
+            status: "pending" as const,
+          })
+        );
+
+        if (genId !== eagerStyleGenIdRef.current) return;
+        setEagerStyles({ prompt: state.prompt, suggestions, isLoadingSuggestions: false });
+
+        // Phase 2: Generate preview images individually
+        for (let i = 0; i < suggestions.length; i++) {
+          const s = suggestions[i];
+          fetch("/api/generate-style-preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: state.prompt, styleName: s.styleName, description: s.description }),
+            signal: controller.signal,
+          })
+            .then(r => r.json())
+            .then(imgData => {
+              if (genId !== eagerStyleGenIdRef.current) return;
+              setEagerStyles(prev => {
+                if (!prev || prev.prompt !== state.prompt) return prev;
+                const updated = [...prev.suggestions];
+                updated[i] = { ...updated[i], previewUrl: imgData.imageUrl, status: "loaded" };
+                return { ...prev, suggestions: updated };
+              });
+            })
+            .catch(() => {
+              if (genId !== eagerStyleGenIdRef.current) return;
+              setEagerStyles(prev => {
+                if (!prev) return prev;
+                const updated = [...prev.suggestions];
+                updated[i] = { ...updated[i], status: "failed" };
+                return { ...prev, suggestions: updated };
+              });
+            });
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        if (genId !== eagerStyleGenIdRef.current) return;
+        setEagerStyles(prev => prev ? { ...prev, isLoadingSuggestions: false } : prev);
+      }
+    })();
+
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.detectedTokens, state.prompt]);
 
   const configuredWidgets = useMemo(() => {
     const configured = new Set<TokenCategory>();
@@ -368,6 +454,7 @@ export default function Home() {
                 configuredWidgets={configuredWidgets}
                 currentImageUrl={state.currentImage?.imageUrl}
                 allWidgetsResolved={allWidgetsResolved}
+                eagerStyles={eagerStyles}
               />
 
               {/* Prompt suggestions — below input so layout doesn't shift */}

@@ -241,7 +241,7 @@ Generate a 1024x1024 grayscale depth map.`,
 export async function generateStyleReference(styleName: string, concept: string): Promise<string> {
   const response = await ai.models.generateContent({
     model: "gemini-3-pro-image-preview",
-    contents: `Generate a small thumbnail reference image in ${styleName} style depicting: ${concept}. Make it a clear, beautiful example of this style. Square format.`,
+    contents: `Generate an image in ${styleName} style depicting: ${concept}. Make it a clear, beautiful example of this style. Absolutely no text or labels. Square format.`,
     config: {
       responseModalities: ["IMAGE"],
     },
@@ -253,6 +253,72 @@ export async function generateStyleReference(styleName: string, concept: string)
     }
   }
   throw new Error("No reference image generated");
+}
+
+export async function suggestStyles(
+  prompt: string,
+  tokenText: string,
+): Promise<{ styleName: string; description: string }[]> {
+  const response = await ai.models.generateContent({
+    model: "gemini-3.1-pro-preview",
+    contents: `You are an art director for a text-to-image pipeline. Given a user's prompt and the style-related token they used, suggest 5-6 distinct visual styles that would work well for this scene.
+
+Return:
+- 2-3 styles specifically suited to the user's intent and scene mood
+- 2-3 exploratory alternatives that offer a different but interesting interpretation
+
+Each style should have:
+- styleName: A specific, evocative name (e.g., "Film Noir Chiaroscuro", not just "Dark"). Be creative and specific.
+- description: A concise phrase describing the visual qualities (brushwork, lighting, palette, texture, mood)
+
+Consider the FULL scene context, not just the style keyword "${tokenText}".
+
+User prompt: "${prompt}"
+Style token: "${tokenText}"
+
+Return ONLY a JSON array of style objects.`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            styleName: { type: Type.STRING },
+            description: { type: Type.STRING },
+          },
+          required: ["styleName", "description"],
+        },
+      },
+    },
+  });
+
+  try {
+    return JSON.parse(response.text ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+export async function generateStylePreview(
+  styleName: string,
+  description: string,
+  userPrompt: string,
+): Promise<string> {
+  const response = await ai.models.generateContent({
+    model: "gemini-3-pro-image-preview",
+    contents: `Generate an image showing: ${userPrompt}. Render it in ${styleName} style (${description}). Absolutely no text or labels. Square format, clear and beautiful.`,
+    config: {
+      responseModalities: ["IMAGE"],
+    },
+  });
+
+  for (const part of response.candidates?.[0]?.content?.parts ?? []) {
+    if (part.inlineData) {
+      return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+    }
+  }
+  throw new Error("No style preview generated");
 }
 
 export async function generateWithGemini(prompt: string): Promise<string> {

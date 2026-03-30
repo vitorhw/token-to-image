@@ -53,6 +53,13 @@ export interface StyleSelection {
   selectedReferences: string[]; // concept names chosen by user
 }
 
+export interface StyleSuggestion {
+  styleName: string;       // e.g., "Monet-style Impressionist"
+  description: string;     // e.g., "Soft brushstrokes, warm golden light, dreamy atmosphere"
+  previewUrl?: string;     // data URL of preview (user's prompt rendered in this style)
+  status: "pending" | "loaded" | "failed";
+}
+
 export interface MaskRegion {
   dataUrl: string;
   editPrompt: string;

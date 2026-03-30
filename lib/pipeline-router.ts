@@ -17,6 +17,10 @@ export interface PipelineResult {
   conditioningImages: ConditioningImage[];
 }
 
+function getActiveStyleReference(ws: WidgetState): string | undefined {
+  return ws.styleSelection?.selectedReferences?.[0];
+}
+
 function describePosition(x: number, width: number): string {
   const center = x + width / 2;
   if (center < 0.33) return "on the left third";
@@ -39,9 +43,9 @@ function buildEnrichedPrompt(prompt: string, ws: WidgetState): string {
 
   // Style FIRST (most impactful on overall result)
   if (ws.styleSelection?.styleName) {
-    const refs = ws.styleSelection.selectedReferences;
-    if (refs?.length) {
-      parts.push(`${ws.styleSelection.styleName} style, evoking ${refs.join(", ")}.`);
+    const activeReference = getActiveStyleReference(ws);
+    if (activeReference) {
+      parts.push(`${ws.styleSelection.styleName} style, evoking ${activeReference}.`);
     } else {
       parts.push(`${ws.styleSelection.styleName} style.`);
     }
@@ -72,7 +76,7 @@ function buildEnrichedPrompt(prompt: string, ws: WidgetState): string {
   return parts.join(" ");
 }
 
-function buildInfoSummary(enrichedPrompt: string, ws: WidgetState, condImages: any[]): string {
+function buildInfoSummary(enrichedPrompt: string, ws: WidgetState, condImages: ConditioningImage[]): string {
   const lines: string[] = [`Prompt:\n${enrichedPrompt}`];
 
   if (condImages.length > 0) {
@@ -90,7 +94,14 @@ function buildInfoSummary(enrichedPrompt: string, ws: WidgetState, condImages: a
     lines.push(`Pose: ${ws.poseSelection.sourceName}`);
   }
   if (ws.styleSelection?.styleName) {
-    lines.push(`Style: ${ws.styleSelection.styleName}`);
+    const activeReference = getActiveStyleReference(ws);
+    const refs = activeReference
+      ? ` (${activeReference})`
+      : "";
+    const exemplarCount = ws.styleSelection.exemplarUrls?.length
+      ? " [1 reference image]"
+      : "";
+    lines.push(`Style: ${ws.styleSelection.styleName}${refs}${exemplarCount}`);
   }
 
   return lines.join("\n");
@@ -98,6 +109,26 @@ function buildInfoSummary(enrichedPrompt: string, ws: WidgetState, condImages: a
 
 function hasConditioningImages(ws: WidgetState): boolean {
   return !!(ws.depthMapDataUrl || ws.poseImageDataUrl || ws.styleSelection?.exemplarUrls?.length);
+}
+
+function describeConditioningPipeline(ws: WidgetState): string {
+  const parts: string[] = [];
+
+  if (ws.depthMapDataUrl || ws.poseImageDataUrl) {
+    if (ws.depthMapDataUrl && ws.poseImageDataUrl) {
+      parts.push("Depth/Pose ControlNet");
+    } else if (ws.depthMapDataUrl) {
+      parts.push("Depth ControlNet");
+    } else {
+      parts.push("Pose ControlNet");
+    }
+  }
+
+  if (ws.styleSelection?.exemplarUrls?.length) {
+    parts.push("Reference Image");
+  }
+
+  return parts.length > 0 ? `Flux + ${parts.join(" + ")}` : "Flux General";
 }
 
 export async function routeGeneration(input: PipelineInput): Promise<PipelineResult> {
@@ -118,14 +149,14 @@ export async function routeGeneration(input: PipelineInput): Promise<PipelineRes
     };
   }
 
-  // ControlNet path — 4 images from fal
+  // Conditioned path — 4 images from fal
   if (hasConditioningImages(ws)) {
-    console.log("[router] ControlNet pipeline (4 images)");
+    console.log(`[router] ${describeConditioningPipeline(ws)} pipeline (4 images)`);
     const r = await generateWithControls({ prompt: enrichedPrompt, widgetState: ws });
     return {
       imageUrls: r.imageUrls,
       provider: "fal",
-      pipeline: "Flux + ControlNet",
+      pipeline: describeConditioningPipeline(ws),
       enrichedPrompt: buildInfoSummary(enrichedPrompt, ws, r.conditioningImages),
       conditioningImages: r.conditioningImages,
     };

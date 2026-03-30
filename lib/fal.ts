@@ -43,6 +43,10 @@ async function uploadDataUrl(dataUrl: string): Promise<string> {
   return url;
 }
 
+async function ensureConditioningImageUrl(imageUrl: string): Promise<string> {
+  return imageUrl.startsWith("data:") ? uploadDataUrl(imageUrl) : imageUrl;
+}
+
 export async function generateWithFlux(prompt: string) {
   console.log("[fal] Text-only generation (4 images)");
   const result = await fal.subscribe("fal-ai/flux-general", {
@@ -74,11 +78,12 @@ export async function generateWithControls(options: {
 
   const controls: any[] = [];
   const conditioningImages: ConditioningImage[] = [];
+  let styleReferenceCount = 0;
 
   const hasBothDepthAndPose = !!(widgetState.depthMapDataUrl && widgetState.poseImageDataUrl);
 
   if (widgetState.depthMapDataUrl) {
-    const url = await uploadDataUrl(widgetState.depthMapDataUrl);
+    const url = await ensureConditioningImageUrl(widgetState.depthMapDataUrl);
     // Lower depth scale when pose is also present so they balance
     const depthScale = hasBothDepthAndPose ? 0.65 : 0.95;
     const depthEnd = hasBothDepthAndPose ? 0.6 : 0.85;
@@ -88,7 +93,7 @@ export async function generateWithControls(options: {
   }
 
   if (widgetState.poseImageDataUrl) {
-    const url = await uploadDataUrl(widgetState.poseImageDataUrl);
+    const url = await ensureConditioningImageUrl(widgetState.poseImageDataUrl);
     controls.push({ control_image_url: url, control_mode: "pose", conditioning_scale: 0.8, end_percentage: 0.65 });
     conditioningImages.push({ label: "Pose Skeleton (ControlNet)", url, type: "pose" });
     console.log("[fal] ControlNet POSE (scale: 0.9, end: 0.65)");
@@ -99,16 +104,16 @@ export async function generateWithControls(options: {
   }
 
   if (widgetState.styleSelection?.exemplarUrls?.length) {
-    input.ip_adapters = widgetState.styleSelection.exemplarUrls.map((url) => ({
-      path: url,
-      ip_adapter_scale: widgetState.styleSelection!.strength,
-    }));
-    for (const url of widgetState.styleSelection.exemplarUrls) {
-      conditioningImages.push({ label: "Style Reference (IP-Adapter)", url, type: "style" });
-    }
+    const primaryStyleReference = widgetState.styleSelection.exemplarUrls[0];
+    const uploadedStyleUrl = await ensureConditioningImageUrl(primaryStyleReference);
+    input.reference_image_url = uploadedStyleUrl;
+    input.reference_strength = widgetState.styleSelection.strength;
+    styleReferenceCount = 1;
+    conditioningImages.push({ label: "Style Reference", url: uploadedStyleUrl, type: "style" });
+    console.log(`[fal] REFERENCE IMAGE STYLE (1 ref, strength: ${widgetState.styleSelection.strength})`);
   }
 
-  console.log("[fal] generateWithControls:", { controls: controls.length });
+  console.log("[fal] generateWithControls:", { controls: controls.length, styleReferences: styleReferenceCount });
   console.log("[fal] Full input payload:", JSON.stringify(sanitizeForLog(input), null, 2));
 
   try {
