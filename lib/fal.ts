@@ -44,9 +44,9 @@ async function uploadDataUrl(dataUrl: string): Promise<string> {
 }
 
 export async function generateWithFlux(prompt: string) {
-  console.log("[fal] Text-only generation");
+  console.log("[fal] Text-only generation (4 images)");
   const result = await fal.subscribe("fal-ai/flux-general", {
-    input: { prompt, image_size: "square_hd", num_images: 1, enable_safety_checker: false },
+    input: { prompt, image_size: "square_hd", num_images: 4, enable_safety_checker: false },
     logs: true,
     onQueueUpdate: (update: any) => {
       console.log(`[fal] Queue status: ${update.status}`);
@@ -57,16 +57,19 @@ export async function generateWithFlux(prompt: string) {
       }
     },
   } as any);
-  return { imageUrl: (result.data as any).images[0].url as string, conditioningImages: [] as ConditioningImage[] };
+  return {
+    imageUrls: (result.data as any).images.map((img: any) => img.url as string),
+    conditioningImages: [] as ConditioningImage[],
+  };
 }
 
 export async function generateWithControls(options: {
   prompt: string;
   widgetState: WidgetState;
-}): Promise<{ imageUrl: string; conditioningImages: ConditioningImage[] }> {
+}): Promise<{ imageUrls: string[]; conditioningImages: ConditioningImage[] }> {
   const { prompt, widgetState } = options;
   const input: Record<string, any> = {
-    prompt, num_images: 1, enable_safety_checker: false, image_size: "square_hd",
+    prompt, num_images: 4, enable_safety_checker: false, image_size: "square_hd",
   };
 
   const controls: any[] = [];
@@ -86,7 +89,7 @@ export async function generateWithControls(options: {
 
   if (widgetState.poseImageDataUrl) {
     const url = await uploadDataUrl(widgetState.poseImageDataUrl);
-    controls.push({ control_image_url: url, control_mode: "pose", conditioning_scale: 0.9, end_percentage: 0.65 });
+    controls.push({ control_image_url: url, control_mode: "pose", conditioning_scale: 0.8, end_percentage: 0.65 });
     conditioningImages.push({ label: "Pose Skeleton (ControlNet)", url, type: "pose" });
     console.log("[fal] ControlNet POSE (scale: 0.9, end: 0.65)");
   }
@@ -121,7 +124,10 @@ export async function generateWithControls(options: {
         }
       },
     } as any);
-    return { imageUrl: (result.data as any).images[0].url as string, conditioningImages };
+    return {
+      imageUrls: (result.data as any).images.map((img: any) => img.url as string),
+      conditioningImages,
+    };
   } catch (err: any) {
     console.error("[fal] Error:", JSON.stringify(err.body ?? err.message));
     throw err;
@@ -133,5 +139,8 @@ export async function inpaintWithFlux(imageUrl: string, maskUrl: string, prompt:
   const result = await fal.subscribe("fal-ai/flux-general/inpainting", {
     input: { image_url: imageUrl, mask_url: finalMaskUrl, prompt, num_images: 1 },
   } as any);
-  return { imageUrl: (result.data as any).images[0].url as string, conditioningImages: [{ label: "Inpainting Mask", url: finalMaskUrl, type: "mask" as const }] };
+  return {
+    imageUrls: [(result.data as any).images[0].url as string],
+    conditioningImages: [{ label: "Inpainting Mask", url: finalMaskUrl, type: "mask" as const }],
+  };
 }

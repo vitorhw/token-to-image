@@ -1,4 +1,4 @@
-import { WidgetState, GenerationResult } from "@/types/tokens";
+import { WidgetState, ConditioningImage } from "@/types/tokens";
 import { generateWithGemini } from "./gemini";
 import { generateWithFlux, generateWithControls, inpaintWithFlux } from "./fal";
 
@@ -7,6 +7,14 @@ interface PipelineInput {
   enrichedPrompt: string;
   widgetState: WidgetState;
   previousImageUrl?: string;
+}
+
+export interface PipelineResult {
+  imageUrls: string[];
+  provider: "gemini" | "fal";
+  pipeline: string;
+  enrichedPrompt: string;
+  conditioningImages: ConditioningImage[];
 }
 
 function describePosition(x: number, width: number): string {
@@ -92,36 +100,63 @@ function hasConditioningImages(ws: WidgetState): boolean {
   return !!(ws.depthMapDataUrl || ws.poseImageDataUrl || ws.styleSelection?.exemplarUrls?.length);
 }
 
-export async function routeGeneration(input: PipelineInput): Promise<GenerationResult> {
+export async function routeGeneration(input: PipelineInput): Promise<PipelineResult> {
   const { widgetState: ws, previousImageUrl } = input;
   const enrichedPrompt = buildEnrichedPrompt(input.prompt, ws);
 
   console.log(`[router] Enriched: "${enrichedPrompt.slice(0, 250)}"`);
 
-  // Inpainting
+  // Inpainting — single image, no candidate grid
   if (ws.maskRegion && previousImageUrl) {
     const r = await inpaintWithFlux(previousImageUrl, ws.maskRegion.dataUrl, ws.maskRegion.editPrompt || enrichedPrompt);
-    return { ...r, provider: "fal", pipeline: "Flux Inpainting", timestamp: Date.now(),
-      enrichedPrompt: buildInfoSummary(enrichedPrompt, ws, r.conditioningImages) };
+    return {
+      imageUrls: r.imageUrls,
+      provider: "fal",
+      pipeline: "Flux Inpainting",
+      enrichedPrompt: buildInfoSummary(enrichedPrompt, ws, r.conditioningImages),
+      conditioningImages: r.conditioningImages,
+    };
   }
 
-  // ControlNet path
+  // ControlNet path — 4 images from fal
   if (hasConditioningImages(ws)) {
-    console.log("[router] ControlNet pipeline");
+    console.log("[router] ControlNet pipeline (4 images)");
     const r = await generateWithControls({ prompt: enrichedPrompt, widgetState: ws });
-    return { ...r, provider: "fal", pipeline: "Flux + ControlNet", timestamp: Date.now(),
-      enrichedPrompt: buildInfoSummary(enrichedPrompt, ws, r.conditioningImages) };
+    return {
+      imageUrls: r.imageUrls,
+      provider: "fal",
+      pipeline: "Flux + ControlNet",
+      enrichedPrompt: buildInfoSummary(enrichedPrompt, ws, r.conditioningImages),
+      conditioningImages: r.conditioningImages,
+    };
   }
 
-  // Text-only
-  console.log("[router] Text-only pipeline");
+  // Text-only — 4 parallel Gemini calls, fallback to Flux
+  console.log("[router] Text-only pipeline (4 parallel Gemini calls)");
   try {
-    const imageUrl = await generateWithGemini(enrichedPrompt);
-    return { imageUrl, provider: "gemini", pipeline: "Gemini Flash", timestamp: Date.now(),
-      enrichedPrompt: buildInfoSummary(enrichedPrompt, ws, []), conditioningImages: [] };
+    const results = await Promise.allSettled(
+      Array.from({ length: 4 }, () => generateWithGemini(enrichedPrompt))
+    );
+    const urls = results
+      .filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled")
+      .map(r => r.value);
+    if (urls.length === 0) throw new Error("All Gemini calls failed");
+    return {
+      imageUrls: urls,
+      provider: "gemini",
+      pipeline: "Gemini Flash",
+      enrichedPrompt: buildInfoSummary(enrichedPrompt, ws, []),
+      conditioningImages: [],
+    };
   } catch {
+    console.log("[router] Gemini failed, falling back to Flux (4 images)");
     const r = await generateWithFlux(enrichedPrompt);
-    return { ...r, provider: "fal", pipeline: "Flux General", timestamp: Date.now(),
-      enrichedPrompt: buildInfoSummary(enrichedPrompt, ws, []) };
+    return {
+      imageUrls: r.imageUrls,
+      provider: "fal",
+      pipeline: "Flux General",
+      enrichedPrompt: buildInfoSummary(enrichedPrompt, ws, []),
+      conditioningImages: [],
+    };
   }
 }

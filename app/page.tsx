@@ -3,6 +3,7 @@
 import { useReducer, useCallback, useRef, useMemo, useState } from "react";
 import { PromptInput } from "@/components/prompt-input";
 import { ImageViewer } from "@/components/image-viewer";
+import { CandidateGrid } from "@/components/candidate-grid";
 import { PromptSuggestions } from "@/components/prompt-suggestions";
 import { MaskPainter } from "@/components/widgets/mask-painter";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import { TAXONOMY } from "@/lib/token-taxonomy";
 import { cn } from "@/lib/utils";
 import {
   AppState,
+  ConditioningImage,
   DetectedToken,
   GenerationResult,
   TokenCategory,
@@ -116,6 +118,14 @@ export default function Home() {
   >([]);
   const [useTestDepthMap, setUseTestDepthMap] = useState(false);
   const [showMaskDialog, setShowMaskDialog] = useState(false);
+  const [candidateImages, setCandidateImages] = useState<string[] | null>(null);
+  const [pendingGeneration, setPendingGeneration] = useState<{
+    provider: "gemini" | "fal";
+    pipeline: string;
+    enrichedPrompt: string;
+    conditioningImages: ConditioningImage[];
+    snapshot: Snapshot;
+  } | null>(null);
   const detectAbortRef = useRef<AbortController | null>(null);
 
   const configuredWidgets = useMemo(() => {
@@ -227,11 +237,32 @@ export default function Home() {
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      dispatch({
-        type: "ADD_GENERATION",
-        result: { ...data, enrichedPrompt: data.enrichedPrompt },
-        snapshot,
-      });
+      const imageUrls: string[] = data.imageUrls;
+      if (imageUrls.length === 1) {
+        // Single result (inpainting) — skip selection, add directly
+        dispatch({
+          type: "ADD_GENERATION",
+          result: {
+            imageUrl: imageUrls[0],
+            provider: data.provider,
+            pipeline: data.pipeline,
+            timestamp: Date.now(),
+            enrichedPrompt: data.enrichedPrompt,
+            conditioningImages: data.conditioningImages,
+          },
+          snapshot,
+        });
+      } else {
+        // Multiple candidates — enter selection mode
+        setCandidateImages(imageUrls);
+        setPendingGeneration({
+          provider: data.provider,
+          pipeline: data.pipeline,
+          enrichedPrompt: data.enrichedPrompt,
+          conditioningImages: data.conditioningImages,
+          snapshot,
+        });
+      }
     } catch (err) {
       console.error("Generation failed:", err);
       dispatch({ type: "SET_GENERATION_STATUS", status: `Error: ${err instanceof Error ? err.message : "Failed"}` });
@@ -240,6 +271,21 @@ export default function Home() {
       dispatch({ type: "SET_GENERATING", isGenerating: false });
     }
   }, [state.prompt, state.widgetState, state.detectedTokens, state.currentImage, useTestDepthMap]);
+
+  const handleSelectCandidate = useCallback((index: number) => {
+    if (!candidateImages || !pendingGeneration) return;
+    const result: GenerationResult = {
+      imageUrl: candidateImages[index],
+      provider: pendingGeneration.provider,
+      pipeline: pendingGeneration.pipeline,
+      timestamp: Date.now(),
+      enrichedPrompt: pendingGeneration.enrichedPrompt,
+      conditioningImages: pendingGeneration.conditioningImages,
+    };
+    dispatch({ type: "ADD_GENERATION", result, snapshot: pendingGeneration.snapshot });
+    setCandidateImages(null);
+    setPendingGeneration(null);
+  }, [candidateImages, pendingGeneration]);
 
   const currentEnrichedPrompt = state.currentImage
     ? state.enrichedPrompts.get(state.currentImage.timestamp)
@@ -423,10 +469,26 @@ export default function Home() {
           {/* Image display */}
           <div className="flex-1 overflow-y-auto">
             <div className="max-w-3xl p-6">
-              {state.currentImage || state.isGenerating ? (
+              {state.isGenerating ? (
                 <ImageViewer
                   currentImage={state.currentImage}
-                  isGenerating={state.isGenerating}
+                  isGenerating={true}
+                  generationStatus={state.generationStatus}
+                  enrichedPrompt={currentEnrichedPrompt}
+                  debugConditioningImages={debugConditioningImages}
+                  useTestDepthMap={useTestDepthMap}
+                  onToggleTestDepthMap={setUseTestDepthMap}
+                />
+              ) : candidateImages ? (
+                <CandidateGrid
+                  candidates={candidateImages}
+                  onSelect={handleSelectCandidate}
+                  pipeline={pendingGeneration?.pipeline ?? ""}
+                />
+              ) : state.currentImage ? (
+                <ImageViewer
+                  currentImage={state.currentImage}
+                  isGenerating={false}
                   generationStatus={state.generationStatus}
                   enrichedPrompt={currentEnrichedPrompt}
                   debugConditioningImages={debugConditioningImages}

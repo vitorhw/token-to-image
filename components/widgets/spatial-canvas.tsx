@@ -34,38 +34,53 @@ function depthToColor(depth: number): string {
 export function SpatialCanvas({ value, onChange, subjects, prompt, onDepthMapGenerated, generatedMapUrl, onDone, poseKeypoints }: SpatialCanvasProps) {
   const [generating, setGenerating] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
+  const [depthMapVariations, setDepthMapVariations] = useState<string[]>([]);
+  const [selectedMapIdx, setSelectedMapIdx] = useState<number | null>(null);
 
   const handleGenerateMap = useCallback(async () => {
     if (value.length === 0) return;
     setGenerating(true);
     setMapError(null);
+    setDepthMapVariations([]);
+    setSelectedMapIdx(null);
     try {
-      // Render labeled layout diagram for Gemini to interpret
       const conditioning = await import("@/lib/conditioning");
       const layoutDiagramDataUrl = conditioning.renderLayoutDiagram(value);
-
-      const res = await fetch("/api/generate-spatial-map", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          regions: value,
-          prompt: prompt || "",
-          layoutDiagramDataUrl,
-          poseKeypoints: poseKeypoints?.length ? poseKeypoints : undefined,
-        }),
+      const body = JSON.stringify({
+        regions: value,
+        prompt: prompt || "",
+        layoutDiagramDataUrl,
+        poseKeypoints: poseKeypoints?.length ? poseKeypoints : undefined,
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || "Failed to generate depth map");
-      }
-      const { mapDataUrl } = await res.json();
-      onDepthMapGenerated?.(mapDataUrl);
+      // Fire 4 parallel calls
+      const results = await Promise.allSettled(
+        Array.from({ length: 4 }, () =>
+          fetch("/api/generate-spatial-map", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+          }).then(r => {
+            if (!r.ok) throw new Error("Failed");
+            return r.json();
+          })
+        )
+      );
+      const maps = results
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled")
+        .map(r => r.value.mapDataUrl as string);
+      if (maps.length === 0) throw new Error("All depth map generations failed");
+      setDepthMapVariations(maps);
     } catch (err) {
       setMapError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setGenerating(false);
     }
-  }, [value, prompt, onDepthMapGenerated]);
+  }, [value, prompt, poseKeypoints]);
+
+  const selectDepthMap = useCallback((idx: number) => {
+    setSelectedMapIdx(idx);
+    onDepthMapGenerated?.(depthMapVariations[idx]);
+  }, [depthMapVariations, onDepthMapGenerated]);
 
   const initialized = useRef(false);
   if (!initialized.current && subjects?.length && value.length === 0) {
@@ -129,7 +144,7 @@ export function SpatialCanvas({ value, onChange, subjects, prompt, onDepthMapGen
       {/* Canvas */}
       <div
         ref={containerRef}
-        className="relative h-52 w-full rounded-lg border-2 border-dashed border-muted-foreground/20 bg-muted/10"
+        className="relative aspect-square w-full rounded-lg border-2 border-dashed border-muted-foreground/20 bg-muted/10"
         onMouseMove={handleMouseMove}
         onMouseUp={() => setDragging(null)}
         onMouseLeave={() => setDragging(null)}
@@ -224,18 +239,29 @@ export function SpatialCanvas({ value, onChange, subjects, prompt, onDepthMapGen
         </div>
       )}
 
-      {/* Generated depth map preview */}
-      {generatedMapUrl && (
+      {/* Depth map variation grid */}
+      {depthMapVariations.length > 0 && (
         <div className="space-y-1">
-          <div className="overflow-hidden rounded-lg border-2 border-primary/30">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={generatedMapUrl} alt="Generated depth map" className="h-auto w-full" />
+          <p className="text-xs font-semibold">Pick a Depth Map</p>
+          <div className="grid grid-cols-2 gap-2">
+            {depthMapVariations.map((url, i) => (
+              <button key={i} onClick={() => selectDepthMap(i)}
+                className={cn(
+                  "overflow-hidden rounded-lg border-2 transition-all hover:opacity-100",
+                  selectedMapIdx === i
+                    ? "border-primary ring-2 ring-primary/20"
+                    : "border-transparent opacity-75 hover:border-border"
+                )}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={url} alt={`Depth map ${i + 1}`} className="w-full aspect-square object-cover" />
+              </button>
+            ))}
           </div>
           <Button size="sm" variant="ghost" className="w-full text-xs" onClick={handleGenerateMap} disabled={generating}>
             {generating ? (
               <><Loader2 className="mr-1 h-3 w-3 animate-spin" />Regenerating...</>
             ) : (
-              <><RefreshCw className="mr-1 h-3 w-3" />Regenerate Depth Map</>
+              <><RefreshCw className="mr-1 h-3 w-3" />Regenerate All</>
             )}
           </Button>
         </div>
@@ -243,8 +269,8 @@ export function SpatialCanvas({ value, onChange, subjects, prompt, onDepthMapGen
 
       {mapError && <p className="text-xs text-destructive">{mapError}</p>}
 
-      {/* Primary CTA: Generate Depth Map → Done */}
-      {generatedMapUrl ? (
+      {/* Primary CTA: Generate Depth Maps → Done */}
+      {selectedMapIdx !== null ? (
         <Button className="w-full h-10" onClick={onDone}>
           Done
         </Button>
@@ -255,9 +281,9 @@ export function SpatialCanvas({ value, onChange, subjects, prompt, onDepthMapGen
           disabled={generating || value.length === 0}
         >
           {generating ? (
-            <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" />Generating Depth Map...</>
+            <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" />Generating Depth Maps...</>
           ) : (
-            <><Wand2 className="mr-1.5 h-4 w-4" />Generate Depth Map</>
+            <><Wand2 className="mr-1.5 h-4 w-4" />Generate Depth Maps</>
           )}
         </Button>
       )}

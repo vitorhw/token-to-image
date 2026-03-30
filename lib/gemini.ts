@@ -187,11 +187,12 @@ Rules:
 2. Brighter pixels = closer to camera. Each object's brightness must match its annotated depth value
 3. Place each object at the position and size shown in the diagram
 4. Replace each rectangle with an appropriate SILHOUETTE shape for that object (e.g., "person" → human silhouette, "tree" → tree silhouette, "building" → building silhouette, "car" → car silhouette)
-5. Solid filled silhouettes only — no outlines, no internal detail, no texture
-6. Slight gaussian blur on silhouette edges for smooth depth transitions
-7. Absolutely NO TEXT, NO LABELS, NO ANNOTATIONS in the output — pure grayscale pixels only
-8. AGAIN: ABSOLUTELY NO TEXT, NO LABELS, NO ANNOTATIONS in the output — pure grayscale pixels only
-9. The output depth map must be a valid grayscale image, with no alpha channel and YOU MUST FOLLOW ALL THE RULES ABOVE.
+5. SILHOUETTES MUST BE PROPERLY SIZED AND POSITIONED TO MATCH THE RECTANGLE IN THE DIAGRAM. SILHOUETTES MUST BE WITHIN THE APPROPRIATE RECTANGLE. RECTANGLE FOR POSITIONING.
+6. Solid filled silhouettes only — no outlines, no internal detail, no texture
+7. Slight gaussian blur on silhouette edges for smooth depth transitions
+8. Absolutely NO TEXT, NO LABELS, NO ANNOTATIONS in the output — pure grayscale pixels only
+9. AGAIN: ABSOLUTELY NO TEXT, NO LABELS, NO ANNOTATIONS in the output — pure grayscale pixels only
+10. The output depth map must be a valid grayscale image, with no alpha channel, silhouettes properly sized and positioned, and YOU MUST FOLLOW ALL THE RULES ABOVE.
 
 Scene context: "${prompt}"
 

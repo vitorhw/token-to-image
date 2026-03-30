@@ -23,8 +23,14 @@ export async function POST(req: NextRequest) {
       previousImageUrl,
     });
 
-    console.log(`[generate] Done in ${Date.now() - startTime}ms via ${result.pipeline}`);
-    return NextResponse.json({ ...result, enrichedPrompt: result.enrichedPrompt });
+    console.log(`[generate] Done in ${Date.now() - startTime}ms via ${result.pipeline} (${result.imageUrls.length} images)`);
+    return NextResponse.json({
+      imageUrls: result.imageUrls,
+      provider: result.provider,
+      pipeline: result.pipeline,
+      enrichedPrompt: result.enrichedPrompt,
+      conditioningImages: result.conditioningImages,
+    });
   } catch (error) {
     console.error(`[generate] FAILED after ${Date.now() - startTime}ms:`, error);
     return NextResponse.json(
