@@ -139,7 +139,9 @@ export async function routeGeneration(input: PipelineInput): Promise<PipelineRes
 
   // Inpainting — single image, no candidate grid
   if (ws.maskRegion && previousImageUrl) {
-    const r = await inpaintWithFlux(previousImageUrl, ws.maskRegion.dataUrl, ws.maskRegion.editPrompt || enrichedPrompt);
+    const inpaintPrompt = ws.maskRegion.editPrompt || enrichedPrompt;
+    console.log(`[router] Inpaint editPrompt=${JSON.stringify(ws.maskRegion.editPrompt)}, using: "${inpaintPrompt.slice(0, 200)}"`);
+    const r = await inpaintWithFlux(previousImageUrl, ws.maskRegion.dataUrl, inpaintPrompt);
     return {
       imageUrls: r.imageUrls,
       provider: "fal",

@@ -2,8 +2,9 @@
 
 import { useRef, useCallback, useMemo, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 import { DetectedToken, StyleSuggestion, TokenCategory, WidgetState } from "@/types/tokens";
 import { ColorPicker } from "@/components/widgets/color-picker";
 import { StyleGallery } from "@/components/widgets/style-gallery";
@@ -224,16 +225,6 @@ export function PromptInput({
     onPromptChange(text);
   }, [onPromptChange]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        if (allWidgetsResolved) onGenerate();
-      }
-    },
-    [onGenerate, allWidgetsResolved]
-  );
-
   // Inline token view
   const inlineTokenView = useMemo(() => {
     if (!detectedTokens.length || !prompt) return null;
@@ -295,6 +286,33 @@ export function PromptInput({
     ? detectedTokens.filter(t => !configuredWidgets.has(t.category)).length
     : 0;
 
+  const [showUnresolvedWarning, setShowUnresolvedWarning] = useState(false);
+
+  // Dismiss warning when tokens change
+  useEffect(() => {
+    setShowUnresolvedWarning(false);
+  }, [detectedTokens, configuredWidgets]);
+
+  const handleGenerateClick = useCallback(() => {
+    if (!allWidgetsResolved && !showUnresolvedWarning) {
+      setShowUnresolvedWarning(true);
+      return;
+    }
+    setShowUnresolvedWarning(false);
+    onGenerate();
+  }, [allWidgetsResolved, showUnresolvedWarning, onGenerate]);
+
+  // Also allow Enter to generate with warning bypass
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleGenerateClick();
+      }
+    },
+    [handleGenerateClick]
+  );
+
   return (
     <div className="space-y-2">
       {/* Input area — just the text box */}
@@ -344,16 +362,66 @@ export function PromptInput({
         </div>
       )}
 
-      {/* Generate button — right-aligned, content width */}
-      <div className="flex justify-end">
-        <Button
-          onClick={onGenerate}
-          disabled={isGenerating || isDetecting || !prompt.trim() || !allWidgetsResolved}
-          className="bg-primary px-6 h-10"
-        >
-          {isGenerating && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-          Generate Image
-        </Button>
+      {/* Status banner + Generate button */}
+      <div className="space-y-2">
+        {/* Detection status banner */}
+        {prompt.trim() && (
+          <div className="flex items-center gap-1.5 text-xs">
+            {isDetecting ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                <span className="text-muted-foreground">Detecting tokens...</span>
+              </>
+            ) : detectedTokens.length === 0 ? null : allWidgetsResolved ? (
+              <>
+                <CheckCircle2 className="h-3 w-3 text-green-500" />
+                <span className="text-green-600">All tokens resolved</span>
+              </>
+            ) : (
+              <>
+                <AlertTriangle className="h-3 w-3 text-orange-400" />
+                <span className="text-orange-500">
+                  {unresolvedCount} token{unresolvedCount !== 1 ? "s" : ""} need{unresolvedCount === 1 ? "s" : ""} configuration
+                </span>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Unresolved-token warning dialog */}
+        <Dialog open={showUnresolvedWarning} onOpenChange={setShowUnresolvedWarning}>
+          <DialogContent className="max-w-sm" showCloseButton={false}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-orange-500" />
+                Unconfigured tokens
+              </DialogTitle>
+              <DialogDescription>
+                {unresolvedCount} token{unresolvedCount !== 1 ? "s are" : " is"} not configured. The generated image may not match your intent.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowUnresolvedWarning(false)}>
+                Go back
+              </Button>
+              <Button onClick={() => { setShowUnresolvedWarning(false); onGenerate(); }}>
+                Generate anyway
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Generate button */}
+        <div className="flex justify-end">
+          <Button
+            onClick={handleGenerateClick}
+            disabled={isGenerating || isDetecting || !prompt.trim()}
+            className="bg-primary px-6 h-10"
+          >
+            {isGenerating && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+            Generate Image
+          </Button>
+        </div>
       </div>
     </div>
   );

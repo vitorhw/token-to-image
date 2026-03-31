@@ -141,11 +141,26 @@ export async function generateWithControls(options: {
 
 export async function inpaintWithFlux(imageUrl: string, maskUrl: string, prompt: string) {
   const finalMaskUrl = maskUrl.startsWith("data:") ? await uploadDataUrl(maskUrl) : maskUrl;
-  const result = await fal.subscribe("fal-ai/flux-general/inpainting", {
-    input: { image_url: imageUrl, mask_url: finalMaskUrl, prompt, num_images: 1 },
+  const input = { image_url: imageUrl, mask_url: finalMaskUrl, prompt, num_images: 1 };
+  console.log(`[fal] Inpaint input: image_url=${imageUrl.slice(0, 80)}, mask_url=${finalMaskUrl.slice(0, 80)}, prompt="${prompt.slice(0, 120)}"`);
+  console.log("[fal] Inpaint full payload:", JSON.stringify(sanitizeForLog(input), null, 2));
+  const result = await fal.subscribe("fal-ai/flux-pro/v1/fill", {
+    input,
+    logs: true,
+    onQueueUpdate: (update: any) => {
+      console.log(`[fal] Inpaint queue: ${update.status}`);
+      if ("logs" in update && update.logs?.length) {
+        for (const log of update.logs) {
+          console.log(`[fal] Inpaint server: ${log.message}`);
+        }
+      }
+    },
   } as any);
+  const data = result.data as any;
+  const img = data.images?.[0];
+  console.log(`[fal] Inpaint result: ${img?.width}x${img?.height}, url=${img?.url?.slice(0, 80)}`);
   return {
-    imageUrls: [(result.data as any).images[0].url as string],
+    imageUrls: [img.url as string],
     conditioningImages: [{ label: "Inpainting Mask", url: finalMaskUrl, type: "mask" as const }],
   };
 }

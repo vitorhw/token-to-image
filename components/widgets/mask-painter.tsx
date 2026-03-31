@@ -21,13 +21,17 @@ export function MaskPainter({ imageUrl, value, onChange }: MaskPainterProps) {
   const [editPrompt, setEditPrompt] = useState(value?.editPrompt ?? "");
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    canvas.width = 512;
-    canvas.height = 512;
-    ctx.clearRect(0, 0, 512, 512);
+    const img = new window.Image();
+    img.onload = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      ctx?.clearRect(0, 0, canvas.width, canvas.height);
+    };
+    img.crossOrigin = "anonymous";
+    img.src = imageUrl;
   }, [imageUrl]);
 
   const draw = useCallback(
